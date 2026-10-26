@@ -1,0 +1,20 @@
+[Unit]
+Description=FRPC-EDS - panel de control
+After=network-online.target frps.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=frp
+Group=frp
+WorkingDirectory=/opt/frpc-eds
+EnvironmentFile=/opt/frpc-eds/.env
+# Ajusta la ruta si Node está instalado en otro sitio (which node)
+ExecStart=/usr/bin/node /opt/frpc-eds/src/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

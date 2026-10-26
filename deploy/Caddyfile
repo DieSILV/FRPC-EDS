@@ -1,0 +1,67 @@
+# ==================================================================
+# FRPC-EDS - Caddyfile
+#
+# Caddy termina TLS y reenvía a frps (vhost HTTP) en 127.0.0.1:8080.
+# Deja frps escuchando el vhost SOLO en localhost:
+#   proxyBindAddr = "127.0.0.1"
+# y vhostHTTPPort = 8080 en la pestaña «Servidor» del panel.
+#
+# Ruta: /etc/caddy/Caddyfile   →   systemctl reload caddy
+# ==================================================================
+
+{
+	email tu-correo@ejemplo.com
+}
+
+# ------------------------------------------------------------------
+# OPCIÓN A (recomendada): certificado wildcard *.eds.dev
+# Requiere Caddy compilado con el plugin DNS de tu proveedor:
+#   xcaddy build --with github.com/caddy-dns/cloudflare
+# y la variable de entorno CF_API_TOKEN con permiso Zone.DNS:Edit
+# ------------------------------------------------------------------
+
+*.eds.dev {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Real-IP {remote_host}
+		flush_interval -1
+	}
+}
+
+# Panel de control (opcional: si no lo expones, usa un túnel SSH)
+panel.eds.dev {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	reverse_proxy 127.0.0.1:7800
+}
+
+# ------------------------------------------------------------------
+# OPCIÓN B (sin plugins): certificado por subdominio bajo demanda.
+# Caddy pide un certificado la primera vez que alguien visita
+# <sub>.eds.dev y solo si el panel confirma que el túnel existe
+# (endpoint /api/tls/ask). Comenta la Opción A y descomenta esto.
+# ------------------------------------------------------------------
+#
+# {
+# 	email tu-correo@ejemplo.com
+# 	on_demand_tls {
+# 		ask http://127.0.0.1:7800/api/tls/ask
+# 	}
+# }
+#
+# http:// {
+# 	redir https://{host}{uri} permanent
+# }
+#
+# :443 {
+# 	tls {
+# 		on_demand
+# 	}
+# 	reverse_proxy 127.0.0.1:8080 {
+# 		flush_interval -1
+# 	}
+# }

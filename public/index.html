@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FRPC-EDS · Panel</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">◈</div>
+        <div>
+          <h1>FRPC-EDS</h1>
+          <p>Exposición de servicios locales</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span id="frps-pill" class="pill"><span class="dot"></span> comprobando…</span>
+        <span id="domain-chip" class="chip">—</span>
+        <button class="btn ghost sm" id="btn-logout">Salir</button>
+      </div>
+    </header>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="tunnels">Túneles</button>
+      <button class="tab" data-tab="nodes">Servidores</button>
+      <button class="tab" data-tab="agent">Agente local</button>
+      <button class="tab" data-tab="server">Servidor</button>
+    </nav>
+
+    <main>
+      <section id="view-tunnels" class="view active">
+        <div id="tunnel-alerts"></div>
+        <div class="stats" id="stats"></div>
+        <div class="card">
+          <div class="card-head">
+            <h2>Túneles<span class="sub" id="tunnels-sub"></span></h2>
+            <div class="card-actions">
+              <button class="btn primary" data-act="new-tunnel">+ Nuevo túnel</button>
+            </div>
+          </div>
+          <div id="tunnels-body"></div>
+        </div>
+      </section>
+
+      <section id="view-nodes" class="view">
+        <div class="card">
+          <div class="card-head">
+            <h2>Servidores<span class="sub">máquinas que publican servicios</span></h2>
+            <div class="card-actions">
+              <button class="btn primary" data-act="new-node">+ Agregar servidor</button>
+            </div>
+          </div>
+          <div id="nodes-body"></div>
+        </div>
+        <div class="banner" id="nodes-help">
+          <span>ℹ️</span>
+          <div>
+            Descarga el archivo <code class="mono">frpc.toml</code> de cada servidor y colócalo en su
+            máquina: es todo lo que necesita para conectar sus servicios a este servidor FRP.
+          </div>
+        </div>
+      </section>
+
+      <section id="view-agent" class="view">
+        <div class="card">
+          <div class="card-head">
+            <h2>Agente local<span class="sub">proceso frpc de este host</span></h2>
+            <div class="card-actions" id="agent-actions"></div>
+          </div>
+          <div class="card-body" id="agent-body"></div>
+          <pre class="log-box" id="log-box"></pre>
+        </div>
+      </section>
+
+      <section id="view-server" class="view"></section>
+    </main>
+
+    <div id="modal-root"></div>
+    <div id="toasts"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "frpc-eds",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Servidor FRP (frps) + panel de control para exponer servicios locales en subdominios",
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "frps": "node scripts/run-frps.js",
+    "frp:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-frp.ps1"
+  }
+}
