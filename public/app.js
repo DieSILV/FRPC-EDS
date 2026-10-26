@@ -214,7 +214,7 @@ function tunnelRow(t) {
   return `<tr data-id="${esc(t.id)}">
     <td>
       <div class="cell-title"><span class="dot ${statusDot}"></span>${esc(t.name)}</div>
-      <div class="cell-sub">${esc(t.nodeName)} · <span class="badge ${esc(t.type)}">${esc(t.type)}</span></div>
+      <div class="cell-sub">${esc(t.nodeName)} · <span class="badge ${esc(t.type)}">${esc(t.type)}</span>${(t.ipAllow || []).length ? " · 🔒" : ""}</div>
     </td>
     <td>${
       t.url
@@ -630,6 +630,30 @@ function openTunnelModal(tunnel) {
         <span class="hint">Se publican como https://sub.dominio:PUERTO con TLS. Habilitados: 3000, 3001, 4173, 5173.</span>
       </div>
 
+      <div class="field" data-when="http">
+        <label>IPs permitidas · lista blanca (opcional)</label>
+        <input type="text" name="ipAllow" class="mono" value="${esc((current.ipAllow || []).join(", "))}" placeholder="38.137.206.45, 190.40.0.0/16" />
+        <span class="hint">Si pones alguna, solo esas IPs pueden entrar a este túnel.</span>
+      </div>
+
+      <div class="field" data-when="http">
+        <label>IPs bloqueadas · lista negra (opcional)</label>
+        <input type="text" name="ipDeny" class="mono" value="${esc((current.ipDeny || []).join(", "))}" placeholder="1.2.3.4" />
+        <span class="hint">Tienen prioridad sobre la lista blanca.</span>
+      </div>
+
+      <div class="grid-2" data-when="http">
+        <div class="field">
+          <label>Usuario (opcional)</label>
+          <input type="text" name="basicUser" value="${esc(current.basicAuth?.user || "")}" autocomplete="off" placeholder="cliente" />
+        </div>
+        <div class="field">
+          <label>Contraseña</label>
+          <input type="text" name="basicPass" class="mono" value="${esc(current.basicAuth?.password || "")}" autocomplete="off" />
+        </div>
+      </div>
+      <span class="hint" style="margin-top:-8px">Si rellenas el usuario, el navegador pedirá credenciales antes de entrar.</span>
+
       <div class="grid-2">
         <div class="field">
           <label>IP / host local</label>
@@ -672,6 +696,12 @@ function openTunnelModal(tunnel) {
         subdomain: fd.get("subdomain") || "",
         customDomains: fd.get("customDomains") || "",
         publicPorts: fd.get("publicPorts") || "",
+        ipAllow: fd.get("ipAllow") || "",
+        ipDeny: fd.get("ipDeny") || "",
+        basicAuth: {
+          user: fd.get("basicUser") || "",
+          password: fd.get("basicPass") || "",
+        },
         localIP: fd.get("localIP"),
         localPort: Number(fd.get("localPort")),
         remotePort: Number(fd.get("remotePort") || 0),
@@ -735,6 +765,12 @@ function openNodeModal(node) {
         <label>Nombre</label>
         <input type="text" name="name" value="${esc(node?.name || "")}" placeholder="Servidor de desarrollo" required maxlength="60" />
       </div>
+
+      <div class="field">
+        <label>IPs autorizadas del servidor (opcional)</label>
+        <input type="text" name="allowedIps" class="mono" value="${esc((node?.allowedIps || []).join(", "))}" placeholder="38.137.206.45" />
+        <span class="hint">Si pones alguna, esta máquina solo podrá conectar desde esas IPs. Vacío = cualquiera con el token.</span>
+      </div>
       ${
         node
           ? ""
@@ -750,11 +786,18 @@ function openNodeModal(node) {
     onSubmit: async (form) => {
       const fd = new FormData(form);
       if (node) {
-        await api(`/api/nodes/${node.id}`, { method: "PUT", body: { name: fd.get("name") } });
+        await api(`/api/nodes/${node.id}`, {
+          method: "PUT",
+          body: { name: fd.get("name"), allowedIps: fd.get("allowedIps") || "" },
+        });
       } else {
         await api("/api/nodes", {
           method: "POST",
-          body: { name: fd.get("name"), mode: fd.get("mode") || "remote" },
+          body: {
+            name: fd.get("name"),
+            mode: fd.get("mode") || "remote",
+            allowedIps: fd.get("allowedIps") || "",
+          },
         });
       }
       await afterMutation(node ? "Servidor actualizado" : "Servidor agregado");

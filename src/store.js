@@ -11,6 +11,64 @@ export const TUNNEL_TYPES = ["http", "https", "tcp", "udp"];
  */
 export const SUPPORTED_PUBLIC_PORTS = [3000, 3001, 4173, 5173];
 
+/* ------------------------------------------------------------------ */
+/* Listas de IPs (listas blanca/negra)                                 */
+/* ------------------------------------------------------------------ */
+
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+function isValidIp(value) {
+  if (IPV4_RE.test(value)) return value.split(".").every((n) => Number(n) <= 255);
+  return value.includes(":") && /^[0-9a-f:.]+$/i.test(value);
+}
+
+/** Acepta "1.2.3.4", "1.2.3.0/24" o "2001:db8::1" separados por coma/espacio. */
+export function parseIpList(input) {
+  const raw = Array.isArray(input) ? input : String(input ?? "").split(/[\s,;]+/);
+  const out = [];
+  for (const item of raw) {
+    const value = String(item).trim();
+    if (!value) continue;
+    const [addr, bits] = value.split("/");
+    if (!isValidIp(addr)) throw httpError(400, `Dirección IP no válida: ${value}`);
+    if (bits !== undefined) {
+      const n = Number(bits);
+      if (!Number.isInteger(n) || n < 0 || n > (addr.includes(":") ? 128 : 32)) {
+        throw httpError(400, `Máscara no válida: ${value}`);
+      }
+    }
+    if (!out.includes(value)) out.push(value);
+  }
+  return out.slice(0, 200);
+}
+
+function ipv4ToInt(ip) {
+  const m = IPV4_RE.exec(ip);
+  if (!m) return null;
+  return (((+m[1] << 24) | (+m[2] << 16) | (+m[3] << 8) | +m[4]) >>> 0);
+}
+
+/** ¿La IP cumple la regla? Soporta IP exacta y CIDR IPv4. */
+export function ipMatches(ip, rule) {
+  const value = String(ip || "").trim().replace(/^::ffff:/i, "");
+  const [net, bitsRaw] = String(rule).split("/");
+  const bits = bitsRaw === undefined ? null : Number(bitsRaw);
+  if (!net.includes(":")) {
+    const a = ipv4ToInt(value);
+    const b = ipv4ToInt(net);
+    if (a === null || b === null) return false;
+    if (bits === null) return a === b;
+    const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+    return (a & mask) === (b & mask);
+  }
+  if (bits === null) return value.toLowerCase() === net.toLowerCase();
+  return false;
+}
+
+export function ipListMatches(rules, ip) {
+  return (rules || []).some((rule) => ipMatches(ip, rule));
+}
+
 /**
  * Subdominios que no puede usar un túnel: el panel (central), la web
  * principal (www/apex) y los nombres de infraestructura DNS/servicios.
@@ -127,6 +185,7 @@ function ensure(db) {
     if (!n.id) n.id = newId("node");
     if (!n.token) n.token = newSecret();
     if (!n.slug) n.slug = uniqueSlug(db, n.name, n.id);
+    n.allowedIps = Array.isArray(n.allowedIps) ? n.allowedIps.map(String) : [];
     n.lastLoginAt = str(n.lastLoginAt, "");
     n.lastLoginIp = str(n.lastLoginIp, "");
     n.lastLoginError = str(n.lastLoginError, "");
@@ -152,6 +211,8 @@ function ensure(db) {
     t.customDomains = Array.isArray(t.customDomains) ? t.customDomains : [];
     t.healthCheck = t.healthCheck === true;
     t.notes = str(t.notes, "");
+    t.ipAllow = Array.isArray(t.ipAllow) ? t.ipAllow.map(String) : [];
+    t.ipDeny = Array.isArray(t.ipDeny) ? t.ipDeny.map(String) : [];
   }
 
   return db;
@@ -207,6 +268,7 @@ export function createNode(input = {}) {
       throw httpError(409, "Ya existe un servidor local (el que ejecuta este panel)");
     }
     const node = makeNode(db, name, mode);
+    node.allowedIps = parseIpList(input.allowedIps);
     db.nodes.push(node);
     return node;
   });
@@ -243,6 +305,7 @@ export function updateNode(id, input = {}) {
       node.name = name;
     }
     if (input.enabled !== undefined) node.enabled = input.enabled !== false;
+    if (input.allowedIps !== undefined) node.allowedIps = parseIpList(input.allowedIps);
     return node;
   });
 }
@@ -326,6 +389,8 @@ function normalizeTunnel(db, input, existing) {
   let customDomains = [];
   let remotePort = null;
   let publicPorts = [];
+  let ipAllow = [];
+  let ipDeny = [];
 
   if (type === "http" || type === "https") {
     subdomain = String(input.subdomain ?? existing?.subdomain ?? "").trim().toLowerCase();
@@ -358,6 +423,8 @@ function normalizeTunnel(db, input, existing) {
     if (clash) throw httpError(409, `El dominio ya está usado por el túnel "${clash.name}"`);
 
     publicPorts = parsePublicPorts(input.publicPorts ?? existing?.publicPorts ?? []);
+    ipAllow = parseIpList(input.ipAllow ?? existing?.ipAllow ?? []);
+    ipDeny = parseIpList(input.ipDeny ?? existing?.ipDeny ?? []);
     for (const port of publicPorts) {
       const busy = db.tunnels.find(
         (t) => t.id !== existing?.id && (t.publicPorts || []).includes(port),
@@ -398,6 +465,8 @@ function normalizeTunnel(db, input, existing) {
     customDomains,
     remotePort: type === "http" || type === "https" ? null : remotePort,
     publicPorts,
+    ipAllow,
+    ipDeny,
     enabled: (input.enabled ?? existing?.enabled ?? true) !== false,
     healthCheck: (input.healthCheck ?? existing?.healthCheck ?? false) === true,
     basicAuth: { user, password: user ? String(basicAuth.password ?? "") : "" },

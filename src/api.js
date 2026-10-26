@@ -26,6 +26,7 @@ const PUBLIC_PATHS = new Set([
   "/api/session",
   "/api/tls/ask",
   "/api/frp/plugin",
+  "/api/guard",
 ]);
 
 /** Rutas públicas con parómetros (autenticadas por token del propio nodo). */
@@ -543,6 +544,44 @@ export function buildApiRouter() {
     ctx.res.end(toml);
     return true;
   });
+
+  /**
+   * Guardia de acceso por IP para Caddy (`forward_auth`).
+   * Caddy lo llama en cada petición a un túnel: 2xx = permitir, 403 = bloquear.
+   * Solo se acepta desde loopback.
+   */
+  const ipGuard = (ctx) => {
+    const socketIp = ctx.req.socket.remoteAddress || "";
+    const isLocal = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(socketIp);
+    if (!isLocal) return send(ctx, 403, { allow: false, error: "forbidden" });
+
+    const rawHost = String(ctx.req.headers["x-forwarded-host"] || ctx.req.headers.host || "");
+    const host = rawHost.split(",")[0].trim().toLowerCase().replace(/:\d+$/, "");
+    const forwarded = String(ctx.req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    const clientIp = forwarded || socketIp;
+
+    const db = store.read();
+    const tunnel = db.tunnels.find(
+      (t) =>
+        t.enabled &&
+        ((t.subdomain &&
+          db.settings.subDomainHost &&
+          `${t.subdomain}.${db.settings.subDomainHost}` === host) ||
+          (t.customDomains || []).includes(host)),
+    );
+
+    if (!tunnel) return send(ctx, 200, { allow: true });
+    if (store.ipListMatches(tunnel.ipDeny, clientIp)) {
+      return send(ctx, 403, { allow: false, tunnel: tunnel.name, error: "IP bloqueada" });
+    }
+    if ((tunnel.ipAllow || []).length && !store.ipListMatches(tunnel.ipAllow, clientIp)) {
+      return send(ctx, 403, { allow: false, tunnel: tunnel.name, error: "IP no autorizada" });
+    }
+    return send(ctx, 200, { allow: true, tunnel: tunnel.name });
+  };
+  for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"]) {
+    r.add(method, "/api/guard", ipGuard);
+  }
 
   /**
    * Plugin HTTP de frps: frps lo llama en cada Login y NewProxy.

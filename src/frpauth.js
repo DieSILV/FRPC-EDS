@@ -79,6 +79,13 @@ function handleLogin(content) {
     return reject(`El servidor "${node.name}" está deshabilitado en el panel`);
   }
 
+  // Lista blanca de IPs del propio cliente frpc (opcional).
+  const ip = ipOf(content);
+  if ((node.allowedIps || []).length && !store.ipListMatches(node.allowedIps, ip)) {
+    store.recordNodeLogin(node.id, { ok: false, ip, error: "IP no autorizada" });
+    return reject(`La IP ${ip} no está autorizada para el servidor "${node.name}"`);
+  }
+
   const slug = slugOf(content);
   if (slug && node.slug && slug !== node.slug) {
     store.recordNodeLogin(node.id, {
