@@ -12,7 +12,7 @@ const state = {
   es: null,
   timer: null,
   frpsConfig: null,
-  filters: { tunnels: "", nodes: "" },
+  filters: { tunnels: "", nodes: "", access: "" },
 };
 
 /* ------------------------------------------------------------------ */
@@ -104,6 +104,7 @@ async function refresh(silent = false) {
   renderStats();
   renderTunnels();
   renderNodes();
+  if (state.tab === "access") renderAccess();
   if (!silent) {
     if (state.tab === "agent") renderAgent();
     if (state.tab === "server") renderServer();
@@ -118,6 +119,7 @@ function renderView(tab) {
     renderTunnels();
   }
   if (tab === "nodes") renderNodes();
+  if (tab === "access") renderAccess();
   if (tab === "agent") renderAgent();
   if (tab === "server") renderServer();
 }
@@ -330,6 +332,75 @@ function renderNodes() {
   $("#nodes-body").innerHTML = `<div class="table-wrap"><table class="table">
     <thead><tr><th>Servidor</th><th>Tipo</th><th>Túneles</th><th>Alta</th><th></th></tr></thead>
     <tbody>${list.map(nodeRow).join("")}</tbody>
+  </table></div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Render: accesos (listas blancas / negras)                           */
+/* ------------------------------------------------------------------ */
+
+function accessRow(t) {
+  const allow = (t.ipAllow || []).length;
+  const deny = (t.ipDeny || []).length;
+  const auth = t.basicAuth?.user ? `sí (${t.basicAuth.user})` : "—";
+  return `<tr data-id="${esc(t.id)}">
+    <td>
+      <div class="cell-title">${allow ? "🔒 " : ""}${esc(t.name)}</div>
+      <div class="cell-sub">${esc(t.nodeName)} · ${esc(t.url ? t.url.replace(/^https?:\/\//, "") : "—")}</div>
+    </td>
+    <td class="mono tiny">${allow ? esc((t.ipAllow || []).join(", ")) : '<span class="muted">abierto (cualquiera)</span>'}</td>
+    <td class="mono tiny">${deny ? esc((t.ipDeny || []).join(", ")) : '<span class="muted">—</span>'}</td>
+    <td class="tiny">${esc(auth)}</td>
+    <td>
+      <div class="row-actions">
+        <button class="btn sm primary" data-act="edit-access" data-id="${esc(t.id)}">Editar accesos</button>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function renderAccess() {
+  const { tunnels, nodes } = state.data;
+  const q = state.filters.access.trim().toLowerCase();
+  const list = q
+    ? tunnels.filter((t) =>
+        [t.name, t.url, t.nodeName, (t.ipAllow || []).join(" "), (t.ipDeny || []).join(" ")]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+    : tunnels;
+
+  if (!list.length) {
+    $("#access-body").innerHTML = `<div class="empty"><h3>Sin resultados</h3><p>${
+      q ? `Ningún túnel coincide con “${esc(state.filters.access)}”.` : "Crea un túnel para configurar sus accesos."
+    }</p></div>`;
+  } else {
+    $("#access-body").innerHTML = `<div class="table-wrap"><table class="table wide">
+      <thead><tr><th>Túnel</th><th>Lista blanca</th><th>Lista negra</th><th>Basic Auth</th><th></th></tr></thead>
+      <tbody>${list.map(accessRow).join("")}</tbody>
+    </table></div>`;
+  }
+
+  $("#access-nodes").innerHTML = `<div class="table-wrap"><table class="table">
+    <thead><tr><th>Máquina</th><th>IPs autorizadas</th><th></th></tr></thead>
+    <tbody>${nodes
+      .map(
+        (n) => `<tr data-id="${esc(n.id)}">
+      <td>
+        <div class="cell-title">${esc(n.name)}</div>
+        <div class="cell-sub">${n.mode === "local" ? "este droplet" : `remota · ${esc(n.slug)}`}</div>
+      </td>
+      <td class="mono tiny">${
+        (n.allowedIps || []).length
+          ? esc((n.allowedIps || []).join(", "))
+          : '<span class="muted">cualquiera con su token</span>'
+      }</td>
+      <td><button class="btn sm ghost" data-act="edit-node-access" data-id="${esc(n.id)}">Editar</button></td>
+    </tr>`,
+      )
+      .join("")}</tbody>
   </table></div>`;
 }
 
@@ -630,30 +701,6 @@ function openTunnelModal(tunnel) {
         <span class="hint">Se publican como https://sub.dominio:PUERTO con TLS. Habilitados: 3000, 3001, 4173, 5173.</span>
       </div>
 
-      <div class="field" data-when="http">
-        <label>IPs permitidas · lista blanca (opcional)</label>
-        <input type="text" name="ipAllow" class="mono" value="${esc((current.ipAllow || []).join(", "))}" placeholder="38.137.206.45, 190.40.0.0/16" />
-        <span class="hint">Si pones alguna, solo esas IPs pueden entrar a este túnel.</span>
-      </div>
-
-      <div class="field" data-when="http">
-        <label>IPs bloqueadas · lista negra (opcional)</label>
-        <input type="text" name="ipDeny" class="mono" value="${esc((current.ipDeny || []).join(", "))}" placeholder="1.2.3.4" />
-        <span class="hint">Tienen prioridad sobre la lista blanca.</span>
-      </div>
-
-      <div class="grid-2" data-when="http">
-        <div class="field">
-          <label>Usuario (opcional)</label>
-          <input type="text" name="basicUser" value="${esc(current.basicAuth?.user || "")}" autocomplete="off" placeholder="cliente" />
-        </div>
-        <div class="field">
-          <label>Contraseña</label>
-          <input type="text" name="basicPass" class="mono" value="${esc(current.basicAuth?.password || "")}" autocomplete="off" />
-        </div>
-      </div>
-      <span class="hint" style="margin-top:-8px">Si rellenas el usuario, el navegador pedirá credenciales antes de entrar.</span>
-
       <div class="grid-2">
         <div class="field">
           <label>IP / host local</label>
@@ -696,12 +743,6 @@ function openTunnelModal(tunnel) {
         subdomain: fd.get("subdomain") || "",
         customDomains: fd.get("customDomains") || "",
         publicPorts: fd.get("publicPorts") || "",
-        ipAllow: fd.get("ipAllow") || "",
-        ipDeny: fd.get("ipDeny") || "",
-        basicAuth: {
-          user: fd.get("basicUser") || "",
-          password: fd.get("basicPass") || "",
-        },
         localIP: fd.get("localIP"),
         localPort: Number(fd.get("localPort")),
         remotePort: Number(fd.get("remotePort") || 0),
@@ -805,6 +846,82 @@ function openNodeModal(node) {
   });
 }
 
+function openAccessModal(tunnel) {
+  openModal({
+    title: `Accesos · ${tunnel.name}`,
+    submitLabel: "Guardar accesos",
+    body: `
+      <div class="banner"><span>🔐</span><div>
+        Se aplica a <code class="mono">${esc(tunnel.url || tunnel.name)}</code>.
+        Acepta IP exacta o rango CIDR IPv4 (ej. <code class="mono">190.40.0.0/16</code>).
+      </div></div>
+
+      <div class="field">
+        <label>IPs permitidas · lista blanca</label>
+        <input type="text" name="ipAllow" class="mono" value="${esc((tunnel.ipAllow || []).join(", "))}" placeholder="38.137.206.45, 190.40.0.0/16" />
+        <span class="hint">Si pones alguna, solo esas IPs pueden entrar.</span>
+      </div>
+
+      <div class="field">
+        <label>IPs bloqueadas · lista negra</label>
+        <input type="text" name="ipDeny" class="mono" value="${esc((tunnel.ipDeny || []).join(", "))}" placeholder="1.2.3.4" />
+        <span class="hint">Tienen prioridad sobre la lista blanca.</span>
+      </div>
+
+      <div class="grid-2">
+        <div class="field">
+          <label>Usuario (Basic Auth)</label>
+          <input type="text" name="basicUser" value="${esc(tunnel.basicAuth?.user || "")}" autocomplete="off" placeholder="cliente" />
+        </div>
+        <div class="field">
+          <label>Contraseña</label>
+          <input type="text" name="basicPass" class="mono" value="${esc(tunnel.basicAuth?.password || "")}" autocomplete="off" />
+        </div>
+      </div>
+      <span class="hint" style="margin-top:-8px">Con usuario, el navegador pide credenciales antes de entrar.</span>`,
+    onSubmit: async (form) => {
+      const fd = new FormData(form);
+      await api(`/api/tunnels/${tunnel.id}`, {
+        method: "PUT",
+        body: {
+          ipAllow: fd.get("ipAllow") || "",
+          ipDeny: fd.get("ipDeny") || "",
+          basicAuth: {
+            user: fd.get("basicUser") || "",
+            password: fd.get("basicPass") || "",
+          },
+        },
+      });
+      await afterMutation("Accesos actualizados");
+    },
+  });
+}
+
+function openNodeAccessModal(node) {
+  openModal({
+    title: `IPs autorizadas · ${node.name}`,
+    submitLabel: "Guardar",
+    body: `
+      <div class="banner"><span>🖥️</span><div>
+        Limita desde qué IP puede conectar el <code class="mono">frpc</code> de esta máquina.
+        Aunque el token se filtre, no servirá desde otra IP.
+      </div></div>
+      <div class="field">
+        <label>IPs autorizadas (opcional)</label>
+        <input type="text" name="allowedIps" class="mono" value="${esc((node.allowedIps || []).join(", "))}" placeholder="38.137.206.45" />
+        <span class="hint">Vacío = cualquiera que tenga el token de esta máquina.</span>
+      </div>`,
+    onSubmit: async (form) => {
+      const fd = new FormData(form);
+      await api(`/api/nodes/${node.id}`, {
+        method: "PUT",
+        body: { allowedIps: fd.get("allowedIps") || "" },
+      });
+      await afterMutation("IPs del servidor actualizadas");
+    },
+  });
+}
+
 function openNodeConfigModal(node) {
   const base = `/api/nodes/${node.id}`;
   openModal({
@@ -904,6 +1021,18 @@ async function handleAction(act, el) {
     case "node-config": {
       const node = state.data.nodes.find((n) => n.id === id);
       if (node) openNodeConfigModal(node);
+      return;
+    }
+
+    case "edit-access": {
+      const tunnel = state.data.tunnels.find((t) => t.id === id);
+      if (tunnel) openAccessModal(tunnel);
+      return;
+    }
+
+    case "edit-node-access": {
+      const node = state.data.nodes.find((n) => n.id === id);
+      if (node) openNodeAccessModal(node);
       return;
     }
 
@@ -1152,6 +1281,14 @@ async function boot() {
     nodesSearch.addEventListener("input", () => {
       state.filters.nodes = nodesSearch.value;
       renderNodes();
+    });
+  }
+
+  const accessSearch = $("#access-search");
+  if (accessSearch) {
+    accessSearch.addEventListener("input", () => {
+      state.filters.access = accessSearch.value;
+      renderAccess();
     });
   }
 

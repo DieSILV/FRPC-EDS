@@ -26,6 +26,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="tunnels">Túneles</button>
       <button class="tab" data-tab="nodes">Servidores</button>
+      <button class="tab" data-tab="access">Accesos</button>
       <button class="tab" data-tab="agent">Agente local</button>
       <button class="tab" data-tab="server">Servidor</button>
     </nav>
@@ -75,6 +76,30 @@
             Descarga el archivo <code class="mono">frpc.toml</code> de cada servidor y colócalo en su
             máquina: es todo lo que necesita para conectar sus servicios a este servidor FRP.
           </div>
+        </div>
+      </section>
+
+      <section id="view-access" class="view">
+        <div class="card">
+          <div class="card-head">
+            <h2>Accesos<span class="sub">listas blancas y negras por túnel</span></h2>
+            <div class="card-actions">
+              <input
+                id="access-search"
+                class="search"
+                type="search"
+                placeholder="Buscar túnel…"
+                aria-label="Buscar accesos"
+              />
+            </div>
+          </div>
+          <div id="access-body"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <h2>Máquinas<span class="sub">IPs desde las que puede conectar cada frpc</span></h2>
+          </div>
+          <div id="access-nodes"></div>
         </div>
       </section>
 
