@@ -218,7 +218,7 @@ function tunnelRow(t) {
       <div class="cell-title"><span class="dot ${statusDot}"></span>${esc(t.name)}</div>
       <div class="cell-sub">${esc(t.nodeName)} · <span class="badge ${esc(t.type)}">${esc(t.type)}</span>${(t.ipAllow || []).length ? " · 🔒" : ""}</div>
     </td>
-    <td>${
+    <td data-label="URL">${
       t.url
         ? `<a class="mono" href="${esc(t.url)}" target="_blank" rel="noreferrer">${esc(t.url.replace(/^https?:\/\//, ""))}</a>` +
           (t.extraUrls || [])
@@ -229,10 +229,10 @@ function tunnelRow(t) {
             .join("")
         : '<span class="muted">—</span>'
     }</td>
-    <td class="mono">${esc(target)}</td>
-    <td><span class="badge ${t.online ? "ok" : "off"}">${esc(statusText)}</span></td>
-    <td class="mono tiny" title="Fecha de alta">${esc(fmtDate(t.createdAt))}</td>
-    <td class="mono tiny">${traffic}${t.curConns ? ` · ${t.curConns} conn` : ""}</td>
+    <td class="mono" data-label="Destino">${esc(target)}</td>
+    <td data-label="Estado"><span class="badge ${t.online ? "ok" : "off"}">${esc(statusText)}</span></td>
+    <td class="mono tiny" data-label="Alta" title="Fecha de alta">${esc(fmtDate(t.createdAt))}</td>
+    <td class="mono tiny" data-label="Tráfico">${traffic}${t.curConns ? ` · ${t.curConns} conn` : ""}</td>
     <td>
       <div class="row-actions">
         ${t.url ? `<button class="btn sm ghost" data-act="copy-url" data-id="${esc(t.id)}">URL</button>` : ""}
@@ -294,9 +294,9 @@ function nodeRow(n) {
       <div class="cell-title"><span class="dot ${isLocal ? "online" : "offline"}"></span>${esc(n.name)}</div>
       <div class="cell-sub">${isLocal ? "frpc en este host" : "Servidor remoto"} · ${esc(n.slug)} · ${esc(last)}</div>
     </td>
-    <td><span class="badge ${isLocal ? "ok" : "off"}">${isLocal ? "local" : "remoto"}</span></td>
-    <td class="mono tiny">${n.onlineCount}/${n.tunnelCount}</td>
-    <td class="mono tiny" title="Fecha de alta">${esc(fmtDate(n.createdAt))}</td>
+    <td data-label="Tipo"><span class="badge ${isLocal ? "ok" : "off"}">${isLocal ? "local" : "remoto"}</span></td>
+    <td class="mono tiny" data-label="Túneles">${n.onlineCount}/${n.tunnelCount}</td>
+    <td class="mono tiny" data-label="Alta" title="Fecha de alta">${esc(fmtDate(n.createdAt))}</td>
     <td>
       <div class="row-actions">
         <button class="btn sm primary" data-act="node-config" data-id="${esc(n.id)}">Token y config</button>
@@ -348,9 +348,9 @@ function accessRow(t) {
       <div class="cell-title">${allow ? "🔒 " : ""}${esc(t.name)}</div>
       <div class="cell-sub">${esc(t.nodeName)} · ${esc(t.url ? t.url.replace(/^https?:\/\//, "") : "—")}</div>
     </td>
-    <td class="mono tiny">${allow ? esc((t.ipAllow || []).join(", ")) : '<span class="muted">abierto (cualquiera)</span>'}</td>
-    <td class="mono tiny">${deny ? esc((t.ipDeny || []).join(", ")) : '<span class="muted">—</span>'}</td>
-    <td class="tiny">${esc(auth)}</td>
+    <td class="mono tiny" data-label="Lista blanca">${allow ? esc((t.ipAllow || []).join(", ")) : '<span class="muted">abierto (cualquiera)</span>'}</td>
+    <td class="mono tiny" data-label="Lista negra">${deny ? esc((t.ipDeny || []).join(", ")) : '<span class="muted">—</span>'}</td>
+    <td class="tiny" data-label="Basic Auth">${esc(auth)}</td>
     <td>
       <div class="row-actions">
         <button class="btn sm primary" data-act="edit-access" data-id="${esc(t.id)}">Editar accesos</button>
@@ -392,7 +392,7 @@ function renderAccess() {
         <div class="cell-title">${esc(n.name)}</div>
         <div class="cell-sub">${n.mode === "local" ? "este droplet" : `remota · ${esc(n.slug)}`}</div>
       </td>
-      <td class="mono tiny">${
+      <td class="mono tiny" data-label="IPs autorizadas">${
         (n.allowedIps || []).length
           ? esc((n.allowedIps || []).join(", "))
           : '<span class="muted">cualquiera con su token</span>'

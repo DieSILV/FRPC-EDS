@@ -478,7 +478,7 @@ table.table {
 }
 
 table.table.wide {
-  min-width: 760px;
+  min-width: 700px;
 }
 
 table.table th {
@@ -960,17 +960,86 @@ input.mono {
 
 /* ---------- responsive ---------- */
 
-@media (max-width: 640px) {
+/* Móvil y tablet en vertical: tablas como tarjetas, sin scroll lateral */
+@media (max-width: 820px) {
   main {
-    padding: 14px;
+    padding: 12px;
   }
   .topbar {
-    padding: 12px 14px;
+    padding: 10px 14px;
+    gap: 10px;
   }
   .tabs {
     padding: 8px 14px 0;
   }
   .brand p {
     display: none;
+  }
+  .brand h1 {
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .card-head {
+    padding: 12px 14px;
+  }
+  .card-actions {
+    width: 100%;
+  }
+  .card-actions .search {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+  .card-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  /* Tablas → tarjetas apiladas (sin scroll horizontal) */
+  table.table,
+  table.table.wide {
+    min-width: 0;
+  }
+  table.table thead {
+    display: none;
+  }
+  table.table tbody tr {
+    display: block;
+    padding: 10px 4px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.table tbody tr:last-child {
+    border-bottom: 0;
+  }
+  table.table td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+    border: 0;
+    padding: 5px 10px;
+    text-align: right;
+  }
+  table.table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    font-size: 10.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted-2);
+    text-align: left;
+  }
+  table.table td:first-child {
+    display: block;
+    text-align: left;
+    padding-bottom: 8px;
+  }
+  table.table .row-actions {
+    justify-content: flex-start;
+  }
+  .log-box {
+    height: 260px;
   }
 }
