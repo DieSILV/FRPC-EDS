@@ -69,6 +69,27 @@ export function ipListMatches(rules, ip) {
   return (rules || []).some((rule) => ipMatches(ip, rule));
 }
 
+/** Rutas bloqueadas por prefijo (ej. /phpmyadmin). Normaliza a minúsculas. */
+export function parsePathList(input) {
+  const raw = Array.isArray(input) ? input : String(input ?? "").split(/[\s,;]+/);
+  const out = [];
+  for (const item of raw) {
+    let value = String(item).trim().toLowerCase();
+    if (!value) continue;
+    if (!value.startsWith("/")) value = `/${value}`;
+    value = value.replace(/\/+$/, "");
+    if (value.length > 80) throw httpError(400, `Ruta demasiado larga: ${value}`);
+    if (!out.includes(value)) out.push(value);
+  }
+  return out.slice(0, 100);
+}
+
+/** ¿La ruta entra en alguna regla? (coincidencia exacta o por carpeta) */
+export function pathBlocked(rules, path) {
+  const value = String(path || "/").toLowerCase();
+  return (rules || []).some((rule) => value === rule || value.startsWith(`${rule}/`));
+}
+
 /**
  * Subdominios que no puede usar un túnel: el panel (central), la web
  * principal (www/apex) y los nombres de infraestructura DNS/servicios.
@@ -213,6 +234,7 @@ function ensure(db) {
     t.notes = str(t.notes, "");
     t.ipAllow = Array.isArray(t.ipAllow) ? t.ipAllow.map(String) : [];
     t.ipDeny = Array.isArray(t.ipDeny) ? t.ipDeny.map(String) : [];
+    t.blockedPaths = Array.isArray(t.blockedPaths) ? t.blockedPaths.map(String) : [];
   }
 
   return db;
@@ -391,6 +413,7 @@ function normalizeTunnel(db, input, existing) {
   let publicPorts = [];
   let ipAllow = [];
   let ipDeny = [];
+  let blockedPaths = [];
 
   if (type === "http" || type === "https") {
     subdomain = String(input.subdomain ?? existing?.subdomain ?? "").trim().toLowerCase();
@@ -425,6 +448,7 @@ function normalizeTunnel(db, input, existing) {
     publicPorts = parsePublicPorts(input.publicPorts ?? existing?.publicPorts ?? []);
     ipAllow = parseIpList(input.ipAllow ?? existing?.ipAllow ?? []);
     ipDeny = parseIpList(input.ipDeny ?? existing?.ipDeny ?? []);
+    blockedPaths = parsePathList(input.blockedPaths ?? existing?.blockedPaths ?? []);
   } else {
     remotePort = Number(input.remotePort ?? existing?.remotePort ?? 0);
     if (!Number.isInteger(remotePort) || remotePort < 0 || remotePort > 65535) {
@@ -461,6 +485,7 @@ function normalizeTunnel(db, input, existing) {
     publicPorts,
     ipAllow,
     ipDeny,
+    blockedPaths,
     enabled: (input.enabled ?? existing?.enabled ?? true) !== false,
     healthCheck: (input.healthCheck ?? existing?.healthCheck ?? false) === true,
     basicAuth: { user, password: user ? String(basicAuth.password ?? "") : "" },

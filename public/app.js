@@ -346,7 +346,7 @@ function accessRow(t) {
   return `<tr data-id="${esc(t.id)}">
     <td>
       <div class="cell-title">${allow ? "🔒 " : ""}${esc(t.name)}</div>
-      <div class="cell-sub">${esc(t.nodeName)} · ${esc(t.url ? t.url.replace(/^https?:\/\//, "") : "—")}</div>
+      <div class="cell-sub">${esc(t.nodeName)} · ${esc(t.url ? t.url.replace(/^https?:\/\//, "") : "—")}${(t.blockedPaths || []).length ? " · 🚫 rutas bloqueadas" : ""}</div>
     </td>
     <td class="mono tiny" data-label="Lista blanca">${allow ? esc((t.ipAllow || []).join(", ")) : '<span class="muted">abierto (cualquiera)</span>'}</td>
     <td class="mono tiny" data-label="Lista negra">${deny ? esc((t.ipDeny || []).join(", ")) : '<span class="muted">—</span>'}</td>
@@ -898,6 +898,24 @@ function readIpList(form, name) {
   return [...box.querySelectorAll(".ip-chip")].map((c) => c.dataset.value);
 }
 
+function bindPmaToggle(form) {
+  const box = form.querySelector('[name="pma"]');
+  if (!box) return;
+  const chips = form.querySelector('[data-iplist="blockedPaths"] .iplist-chips');
+  if (!chips) return;
+  box.addEventListener("change", () => {
+    const has = [...chips.querySelectorAll(".ip-chip")].some(
+      (c) => c.dataset.value === "/phpmyadmin",
+    );
+    if (box.checked && !has) chips.insertAdjacentHTML("beforeend", ipChip("/phpmyadmin"));
+    if (!box.checked && has) {
+      [...chips.querySelectorAll(".ip-chip")]
+        .filter((c) => c.dataset.value === "/phpmyadmin")
+        .forEach((c) => c.remove());
+    }
+  });
+}
+
 function openAccessModal(tunnel) {
   openModal({
     title: `Accesos · ${tunnel.name}`,
@@ -922,7 +940,20 @@ function openAccessModal(tunnel) {
           <input type="text" name="basicPass" class="mono" value="${esc(tunnel.basicAuth?.password || "")}" autocomplete="off" />
         </div>
       </div>
-      <span class="hint" style="margin-top:-8px">Con usuario, el navegador pide credenciales antes de entrar.</span>`,
+      <span class="hint" style="margin-top:-8px">Con usuario, el navegador pide credenciales antes de entrar.</span>
+
+      <label class="check">
+        <input type="checkbox" name="pma" ${(tunnel.blockedPaths || []).includes("/phpmyadmin") ? "checked" : ""} />
+        Bloquear phpMyAdmin
+      </label>
+
+      ${ipListField(
+        "blockedPaths",
+        "Rutas bloqueadas (por prefijo)",
+        tunnel.blockedPaths,
+        "Se bloquea la ruta y todo lo que cuelgue de ella. Ej: /admin, /server-status",
+        "/phpmyadmin",
+      )}`,
     onSubmit: async (form) => {
       const fd = new FormData(form);
       await api(`/api/tunnels/${tunnel.id}`, {
@@ -930,6 +961,7 @@ function openAccessModal(tunnel) {
         body: {
           ipAllow: readIpList(form, "ipAllow"),
           ipDeny: readIpList(form, "ipDeny"),
+          blockedPaths: readIpList(form, "blockedPaths"),
           basicAuth: {
             user: fd.get("basicUser") || "",
             password: fd.get("basicPass") || "",
@@ -940,6 +972,7 @@ function openAccessModal(tunnel) {
     },
   });
   bindIpLists($("#modal-root form"));
+  bindPmaToggle($("#modal-root form"));
 }
 
 function openNodeAccessModal(node) {
@@ -1244,6 +1277,14 @@ function startLogStream() {
     } catch {
       /* ignorar */
     }
+  };
+  es.onerror = () => {
+    es.close();
+    if (state.es === es) state.es = null;
+    // Reconecta solo (p. ej. si el panel se reinicia)
+    setTimeout(() => {
+      if (!state.es) startLogStream();
+    }, 5000);
   };
   state.es = es;
 }

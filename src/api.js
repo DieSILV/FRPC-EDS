@@ -571,6 +571,21 @@ export function buildApiRouter() {
     );
 
     if (!tunnel) return send(ctx, 200, { allow: true });
+
+    // Rutas bloqueadas (ej. /phpmyadmin) — se comprueba antes que las IPs.
+    const rawUri = String(
+      ctx.req.headers["x-original-uri"] || ctx.req.headers["x-forwarded-uri"] || "/",
+    );
+    let reqPath = rawUri.split("?")[0];
+    try {
+      reqPath = decodeURIComponent(reqPath);
+    } catch {
+      /* URI mal formada: se compara tal cual */
+    }
+    if (store.pathBlocked(tunnel.blockedPaths, reqPath)) {
+      return send(ctx, 403, { allow: false, tunnel: tunnel.name, error: "Ruta bloqueada" });
+    }
+
     if (store.ipListMatches(tunnel.ipDeny, clientIp)) {
       return send(ctx, 403, { allow: false, tunnel: tunnel.name, error: "IP bloqueada" });
     }
