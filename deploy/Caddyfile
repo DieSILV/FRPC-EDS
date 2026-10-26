@@ -1,5 +1,5 @@
 # ==================================================================
-# FRPC-EDS - Caddyfile
+# FRPC-EDS - Caddyfile  (dominio base: nexus-pro.pe)
 #
 # Caddy termina TLS y reenvía a frps (vhost HTTP) en 127.0.0.1:8080.
 # Deja frps escuchando el vhost SOLO en localhost:
@@ -14,15 +14,20 @@
 }
 
 # ------------------------------------------------------------------
-# OPCIÓN A (recomendada): certificado wildcard *.eds.dev
-# Requiere Caddy compilado con el plugin DNS de tu proveedor:
-#   xcaddy build --with github.com/caddy-dns/cloudflare
-# y la variable de entorno CF_API_TOKEN con permiso Zone.DNS:Edit
+# OPCIÓN A (recomendada): certificado wildcard *.nexus-pro.pe
+# Requiere Caddy compilado con el plugin DNS de DigitalOcean:
+#   xcaddy build --with github.com/caddy-dns/digitalocean
+# y la variable de entorno DO_AUTH_TOKEN (token de DO con permiso
+# read/write sobre los registros DNS de la zona nexus-pro.pe).
+#
+# DNS necesario en DigitalOcean:
+#   A  *   →  137.184.226.242    (túneles)
+#   A  @   →  167.172.133.217    (web principal; el wildcard NO cubre el apex)
 # ------------------------------------------------------------------
 
-*.eds.dev {
+*.nexus-pro.pe, nexus-pro.pe {
 	tls {
-		dns cloudflare {env.CF_API_TOKEN}
+		dns digitalocean {env.DO_AUTH_TOKEN}
 	}
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:8080 {
@@ -31,10 +36,11 @@
 	}
 }
 
-# Panel de control (opcional: si no lo expones, usa un túnel SSH)
-panel.eds.dev {
+# Panel de control en central.nexus-pro.pe (lo cubre el propio wildcard).
+# Es más específico que el wildcard, así que Caddy lo prioriza.
+central.nexus-pro.pe {
 	tls {
-		dns cloudflare {env.CF_API_TOKEN}
+		dns digitalocean {env.DO_AUTH_TOKEN}
 	}
 	reverse_proxy 127.0.0.1:7800
 }
@@ -42,7 +48,7 @@ panel.eds.dev {
 # ------------------------------------------------------------------
 # OPCIÓN B (sin plugins): certificado por subdominio bajo demanda.
 # Caddy pide un certificado la primera vez que alguien visita
-# <sub>.eds.dev y solo si el panel confirma que el túnel existe
+# <sub>.nexus-pro.pe y solo si el panel confirma que el túnel existe
 # (endpoint /api/tls/ask). Comenta la Opción A y descomenta esto.
 # ------------------------------------------------------------------
 #

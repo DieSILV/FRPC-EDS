@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Router } from "./router.js";
@@ -26,7 +27,36 @@ const PUBLIC_PATHS = new Set([
   "/api/tls/ask",
   "/api/frp/plugin",
 ]);
+
+/** Rutas públicas con parómetros (autenticadas por token del propio nodo). */
+const PUBLIC_PREFIXES = ["/api/client/"];
+
 const FRP_VERSION = "0.71.1";
+
+const isPublicPath = (p) =>
+  PUBLIC_PATHS.has(p) || PUBLIC_PREFIXES.some((prefix) => p.startsWith(prefix));
+
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a ?? ""));
+  const y = Buffer.from(String(b ?? ""));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+
+/** URL pública del panel (para que los clientes se auto-sincronicen). */
+function panelBase(settings) {
+  const explicit = String(settings.panelUrl || "").replace(/\/+$/, "");
+  if (explicit) return explicit;
+  if (!settings.subDomainHost) return "";
+  const scheme = settings.publicScheme === "https" ? "https" : "http";
+  return `${scheme}://central.${settings.subDomainHost}`;
+}
+
+/** URL desde la que un cliente descarga su propia configuracion. */
+function clientConfigUrl(settings, node) {
+  const base = panelBase(settings);
+  if (!base) return "";
+  return `${base}/api/client/${node.id}/frpc.toml?token=${encodeURIComponent(node.token)}`;
+}
 
 /* ------------------------------------------------------------------ */
 /* Helpers de respuesta                                                */
@@ -58,9 +88,19 @@ function download(ctx, filename, content) {
 
 function finishTunnel(db, tunnel, proxies) {
   const frp = proxies.get(tunnel.name);
+  const scheme = db.settings.publicScheme === "https" ? "https" : "http";
+  const host =
+    tunnel.subdomain && db.settings.subDomainHost
+      ? `${tunnel.subdomain}.${db.settings.subDomainHost}`
+      : "";
+  const extraUrls =
+    host && (tunnel.type === "http" || tunnel.type === "https")
+      ? (tunnel.publicPorts || []).map((p) => `${scheme}://${host}:${p}`)
+      : [];
   return {
     ...tunnel,
     url: store.tunnelUrl(tunnel, db.settings),
+    extraUrls,
     nodeName: db.nodes.find((n) => n.id === tunnel.nodeId)?.name || "—",
     online: Boolean(frp && frp.status === "online"),
     frpStatus: frp?.status || "offline",
@@ -128,7 +168,41 @@ async function afterTunnelChange(nodeId) {
   }
 }
 
-function buildInstallScript(node, toml) {
+function buildInstallScript(node, toml, syncUrl = "") {
+  // Watchdog + auto-sincronizacion de la config con el panel.
+  const runScript = `$ErrorActionPreference = 'SilentlyContinue'
+$Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Exe = Join-Path $Dir 'frpc.exe'
+$Cfg = Join-Path $Dir 'frpc.toml'
+$New = Join-Path $Dir 'frpc.toml.new'
+$Url = '${syncUrl}'
+
+function Get-Hash($p) {
+  if (-not (Test-Path -LiteralPath $p)) { return '' }
+  return (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash
+}
+
+$proc = $null
+while ($true) {
+  if ($Url -ne '') {
+    try {
+      Invoke-WebRequest -Uri $Url -OutFile $New -UseBasicParsing -TimeoutSec 15
+      if ((Get-Hash $New) -ne (Get-Hash $Cfg)) {
+        if ($proc -and -not $proc.HasExited) { $proc.Kill(); Start-Sleep -Seconds 2 }
+        Move-Item -Force -LiteralPath $New -Destination $Cfg
+        $proc = $null
+      } else {
+        Remove-Item -Force -LiteralPath $New
+      }
+    } catch { }
+  }
+  if (-not $proc -or $proc.HasExited) {
+    $proc = Start-Process -FilePath $Exe -ArgumentList '-c', $Cfg -PassThru -WindowStyle Hidden
+  }
+  Start-Sleep -Seconds 30
+}
+`;
+
   return `# ------------------------------------------------------------------
 # FRPC-EDS — instalación del cliente para "${node.name}"
 # Generado el ${new Date().toISOString()}
@@ -168,15 +242,60 @@ ${toml.trimEnd()}
 # Sin BOM: algunos parsers TOML fallan con el BOM de PowerShell 5.1
 $configPath = Join-Path $Dir 'frpc.toml'
 [System.IO.File]::WriteAllText($configPath, $config, (New-Object System.Text.UTF8Encoding($false)))
-
 Write-Host "Configuración escrita en $configPath"
-Write-Host "Iniciando frpc (Ctrl+C para detener)..."
-& (Join-Path $Dir 'frpc.exe') -c $configPath
+
+# --- Servicio (tarea programada) + auto-sincronización con el panel ---
+$runPath = Join-Path $Dir 'run.ps1'
+$runBody = @'
+${runScript.trimEnd()}
+'@
+[System.IO.File]::WriteAllText($runPath, $runBody, (New-Object System.Text.UTF8Encoding($false)))
+
+$registered = $false
+try {
+  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $runPath + '"')
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+  $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
+  Register-ScheduledTask -TaskName 'FRPC-EDS' -Action $action -Trigger $trigger -Principal $principal -Settings $taskSettings -Force | Out-Null
+  Start-ScheduledTask -TaskName 'FRPC-EDS'
+  $registered = $true
+  Write-Host "Servicio instalado: tarea programada 'FRPC-EDS' (arranca con Windows)."
+  Write-Host "  Estado:  Get-ScheduledTask -TaskName FRPC-EDS | Get-ScheduledTaskInfo"
+  Write-Host "  Detener: Stop-ScheduledTask -TaskName FRPC-EDS"
+} catch {
+  Write-Host "No se pudo registrar la tarea programada (hace falta ejecutar como Administrador)." -ForegroundColor Yellow
+}
+
+if (-not $registered) {
+  Write-Host "Iniciando frpc en primer plano (Ctrl+C para detener)..."
+  & (Join-Path $Dir 'frpc.exe') -c $configPath
+}
 `;
 }
 
-function buildLinuxInstallScript(node, toml) {
+function buildLinuxInstallScript(node, toml, syncUrl = "") {
   const safeName = String(node.name).replace(/["\r\n]/g, " ").slice(0, 60);
+  const syncScript = `#!/usr/bin/env bash
+# Descarga la configuracion del panel y reinicia frpc si cambio.
+set -u
+DIR="/opt/frpc-eds"
+CONF="$DIR/frpc.toml"
+NEW="$DIR/frpc.toml.new"
+URL="${syncUrl}"
+
+[ -n "$URL" ] || exit 0
+curl -fsS --max-time 15 "$URL" -o "$NEW" || exit 0
+[ -s "$NEW" ] || { rm -f "$NEW"; exit 0; }
+if cmp -s "$NEW" "$CONF"; then
+  rm -f "$NEW"
+  exit 0
+fi
+mv -f "$NEW" "$CONF"
+chmod 600 "$CONF"
+systemctl restart frpc-eds || true
+`;
+
   return `#!/usr/bin/env bash
 # ------------------------------------------------------------------
 # FRPC-EDS - cliente para "${safeName}" (${node.id})
@@ -232,6 +351,35 @@ FRPUNIT
 
 systemctl daemon-reload
 systemctl enable --now frpc-eds
+
+cat > "$DIR/frpc-sync.sh" <<'FRPSYNC'
+${syncScript.trimEnd()}
+FRPSYNC
+chmod 755 "$DIR/frpc-sync.sh"
+
+cat > /etc/systemd/system/frpc-eds-sync.service <<'FRPSYNCSVC'
+[Unit]
+Description=FRPC-EDS - sincroniza la configuracion con el panel
+
+[Service]
+Type=oneshot
+ExecStart=/opt/frpc-eds/frpc-sync.sh
+FRPSYNCSVC
+
+cat > /etc/systemd/system/frpc-eds-sync.timer <<'FRPSYNCTIMER'
+[Unit]
+Description=FRPC-EDS - sincronizacion periodica con el panel
+
+[Timer]
+OnBootSec=30
+OnUnitActiveSec=60
+
+[Install]
+WantedBy=timers.target
+FRPSYNCTIMER
+
+systemctl daemon-reload
+${syncUrl ? "systemctl enable --now frpc-eds-sync.timer" : "true"}
 echo ""
 echo "Servicio frpc-eds iniciado:"
 systemctl --no-pager --lines=15 status frpc-eds || true
@@ -337,18 +485,61 @@ export function buildApiRouter() {
     const db = store.read();
     const node = db.nodes.find((n) => n.id === ctx.params.id);
     if (!node) throw httpError(404, "Servidor no encontrado");
+    if (node.mode === "local") {
+      throw httpError(
+        400,
+        "El servidor local lo gestiona el panel (Agente local). No instales su configuración en otra máquina: crea un servidor para esa máquina.",
+      );
+    }
     const tunnels = db.tunnels.filter((t) => t.nodeId === node.id);
     const toml = buildFrpcToml(db.settings, node, tunnels);
-    return download(ctx, "install-frpc.ps1", buildInstallScript(node, toml));
+    return download(
+      ctx,
+      "install-frpc.ps1",
+      buildInstallScript(node, toml, clientConfigUrl(db.settings, node)),
+    );
   });
 
   r.get("/api/nodes/:id/install.sh", (ctx) => {
     const db = store.read();
     const node = db.nodes.find((n) => n.id === ctx.params.id);
     if (!node) throw httpError(404, "Servidor no encontrado");
+    if (node.mode === "local") {
+      throw httpError(
+        400,
+        "El servidor local lo gestiona el panel (Agente local). No instales su configuración en otra máquina: crea un servidor para esa máquina.",
+      );
+    }
     const tunnels = db.tunnels.filter((t) => t.nodeId === node.id);
     const toml = buildFrpcToml(db.settings, node, tunnels);
-    return download(ctx, "install-frpc.sh", buildLinuxInstallScript(node, toml));
+    return download(
+      ctx,
+      "install-frpc.sh",
+      buildLinuxInstallScript(node, toml, clientConfigUrl(db.settings, node)),
+    );
+  });
+
+  /**
+   * Config del propio cliente, autenticada con su token (sin sesión).
+   * La usan los clientes remotos para auto-sincronizar frpc.toml:
+   *   GET /api/client/<nodeId>/frpc.toml?token=<token del nodo>
+   * Solo devuelve la configuración de ESE nodo.
+   */
+  r.get("/api/client/:id/frpc.toml", (ctx) => {
+    const token = String(ctx.searchParams.get("token") || "");
+    const db = store.read();
+    const node = db.nodes.find((n) => n.id === ctx.params.id);
+    if (!node || !node.enabled || !token || !safeEqual(node.token, token)) {
+      return send(ctx, 403, { error: "Token de servidor no válido" });
+    }
+    const tunnels = db.tunnels.filter((t) => t.nodeId === node.id);
+    const toml = buildFrpcToml(db.settings, node, tunnels);
+    ctx.res.writeHead(200, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    ctx.res.end(toml);
+    return true;
   });
 
   /**
@@ -398,13 +589,33 @@ export function buildApiRouter() {
   );
 
   r.post("/api/tunnels", async (ctx) => {
-    const tunnel = store.createTunnel(ctx.body || {});
+    const body = { ...(ctx.body || {}) };
+    // Alta rápida: si el usuario escribe el nombre de un servidor nuevo,
+    // se crea en el momento y el túnel queda asociado a él.
+    const newServerName = String(body.newServerName || "").trim();
+    if (newServerName) {
+      const node = store.createNode({ name: newServerName, mode: "remote" });
+      body.nodeId = node.id;
+    }
+    delete body.newServerName;
+    const tunnel = store.createTunnel(body);
     await afterTunnelChange(tunnel.nodeId);
     return send(ctx, 201, { tunnel });
   });
 
   r.put("/api/tunnels/:id", async (ctx) => {
-    const tunnel = store.updateTunnel(ctx.params.id, ctx.body || {});
+    const body = { ...(ctx.body || {}) };
+    const previous = store.read().tunnels.find((t) => t.id === ctx.params.id);
+    const newServerName = String(body.newServerName || "").trim();
+    if (newServerName) {
+      const node = store.createNode({ name: newServerName, mode: "remote" });
+      body.nodeId = node.id;
+    }
+    delete body.newServerName;
+    const tunnel = store.updateTunnel(ctx.params.id, body);
+    if (previous && previous.nodeId !== tunnel.nodeId) {
+      await afterTunnelChange(previous.nodeId);
+    }
     await afterTunnelChange(tunnel.nodeId);
     return send(ctx, 200, { tunnel });
   });
@@ -495,7 +706,7 @@ export function buildApiRouter() {
 
       ctx.params = hit.params;
 
-      if (!PUBLIC_PATHS.has(ctx.pathname) && !ctx.session) {
+      if (!isPublicPath(ctx.pathname) && !ctx.session) {
         return send(ctx, 401, { error: "Sesión no válida o expirada" });
       }
 

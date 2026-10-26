@@ -613,6 +613,30 @@ input.mono {
   font-size: 12px;
 }
 
+/* Buscador de las listas (tuneles / servidores) */
+.search {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: #0b121a;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  padding: 8px 11px;
+  min-width: 230px;
+  max-width: 320px;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.search::placeholder {
+  color: var(--muted-2);
+}
+
+.search:focus {
+  border-color: rgba(61, 220, 151, 0.55);
+  box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.12);
+}
+
 .input-group {
   display: flex;
   align-items: stretch;

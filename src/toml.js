@@ -26,13 +26,6 @@ export function buildFrpsToml(s) {
   L.push('auth.method = "token"');
   L.push(`auth.token = ${q(s.authToken)}`);
   L.push("");
-  L.push("# Plugin de autenticacion: valida el token propio de cada servidor");
-  L.push("[[httpPlugins]]");
-  L.push('name = "frpc-eds-auth"');
-  L.push(`addr = "127.0.0.1:${env.port}"`);
-  L.push('path = "/api/frp/plugin"');
-  L.push('ops = ["Login", "NewProxy"]');
-  L.push("");
   L.push("# API de administracion: el panel la consulta para leer el estado");
   L.push('webServer.addr = "127.0.0.1"');
   L.push(`webServer.port = ${s.adminApi.port}`);
@@ -42,6 +35,15 @@ export function buildFrpsToml(s) {
   L.push('log.to = "./frps.log"');
   L.push('log.level = "info"');
   L.push("log.maxDays = 7");
+  L.push("");
+  L.push("# Plugin de autenticacion: valida el token propio de cada servidor.");
+  L.push("# OJO: debe ir AL FINAL. En TOML, cualquier clave escrita despues de");
+  L.push("# [[httpPlugins]] se interpreta como parte de esa tabla.");
+  L.push("[[httpPlugins]]");
+  L.push('name = "frpc-eds-auth"');
+  L.push(`addr = "127.0.0.1:${env.port}"`);
+  L.push('path = "/api/frp/plugin"');
+  L.push('ops = ["Login", "NewProxy"]');
   L.push("");
   return L.join("\n");
 }
@@ -97,6 +99,14 @@ export function buildFrpcToml(s, node, tunnels) {
         L.push(`httpUser = ${q(t.basicAuth.user)}`);
         L.push(`httpPassword = ${q(t.basicAuth.password || "")}`);
       }
+      // frps reconstruye X-Forwarded-Proto como "http" (la conexión Caddy->frps
+      // es HTTP). Con requestHeaders se aplica DESPUÉS, así que aquí corregimos
+      // el esquema para que la app genere URLs https y no haya mixed content.
+      // Solo los proxies `http` soportan requestHeaders (los `https` no).
+      if (t.type === "http" && s.publicScheme === "https") {
+        L.push('requestHeaders.set.X-Forwarded-Proto = "https"');
+        L.push('requestHeaders.set.X-Forwarded-Port = "443"');
+      }
     } else {
       L.push(`remotePort = ${t.remotePort}`);
     }
@@ -109,6 +119,19 @@ export function buildFrpcToml(s, node, tunnels) {
     }
 
     if (t.notes) L.push(`metadatas.note = ${q(t.notes)}`);
+
+    // Puertos publicos adicionales: Caddy termina TLS en https://<host>:<puerto>
+    // y reenvía a 127.0.0.1:(puerto+10000), que es este proxy TCP.
+    for (const port of t.publicPorts || []) {
+      L.push("");
+      L.push(`# Puerto publico ${port} (https://<host>:${port})`);
+      L.push("[[proxies]]");
+      L.push(`name = ${q(`${t.name}__p${port}`)}`);
+      L.push('type = "tcp"');
+      L.push(`localIP = ${q(t.localIP)}`);
+      L.push(`localPort = ${port}`);
+      L.push(`remotePort = ${port + 10000}`);
+    }
   }
 
   L.push("");

@@ -12,6 +12,7 @@ const state = {
   es: null,
   timer: null,
   frpsConfig: null,
+  filters: { tunnels: "", nodes: "" },
 };
 
 /* ------------------------------------------------------------------ */
@@ -189,6 +190,14 @@ function renderStats() {
       <span class="tiny">${esc(state.data.frps.error || "")}</span>
       <button class="btn sm ghost" data-act="goto-server">Revisar</button></div></div>`);
   }
+  const localNode = state.data.nodes.find((n) => n.mode === "local");
+  const localTunnels = state.data.tunnels.filter((t) => t.enabled && t.nodeId === localNode?.id);
+  if (localNode && localTunnels.length && state.data.agent.status !== "running") {
+    alerts.push(`<div class="banner warn"><span>💡</span><div>
+      <strong>${localTunnels.length}</strong> túnel(es) están asignados a <strong>este droplet</strong> y el agente local está detenido.
+      Si esos servicios están en otra máquina (la de cada empresa), edita el túnel y elige su servidor.
+      <button class="btn sm ghost" data-act="goto-agent">Abrir agente local</button></div></div>`);
+  }
   $("#tunnel-alerts").innerHTML = alerts.join("");
 }
 
@@ -209,15 +218,23 @@ function tunnelRow(t) {
     </td>
     <td>${
       t.url
-        ? `<a class="mono" href="${esc(t.url)}" target="_blank" rel="noreferrer">${esc(t.url.replace(/^https?:\/\//, ""))}</a>`
+        ? `<a class="mono" href="${esc(t.url)}" target="_blank" rel="noreferrer">${esc(t.url.replace(/^https?:\/\//, ""))}</a>` +
+          (t.extraUrls || [])
+            .map(
+              (u) =>
+                `<div class="cell-sub mono"><a href="${esc(u)}" target="_blank" rel="noreferrer">${esc(u.replace(/^https?:\/\//, ""))}</a></div>`,
+            )
+            .join("")
         : '<span class="muted">—</span>'
     }</td>
     <td class="mono">${esc(target)}</td>
     <td><span class="badge ${t.online ? "ok" : "off"}">${esc(statusText)}</span></td>
+    <td class="mono tiny" title="Fecha de alta">${esc(fmtDate(t.createdAt))}</td>
     <td class="mono tiny">${traffic}${t.curConns ? ` · ${t.curConns} conn` : ""}</td>
     <td>
       <div class="row-actions">
         ${t.url ? `<button class="btn sm ghost" data-act="copy-url" data-id="${esc(t.id)}">URL</button>` : ""}
+        <button class="btn sm primary" data-act="node-config" data-id="${esc(t.nodeId)}">Instalar</button>
         <button class="btn sm ghost" data-act="edit-tunnel" data-id="${esc(t.id)}">Editar</button>
         <button class="btn sm ghost" data-act="toggle-tunnel" data-id="${esc(t.id)}">${t.enabled ? "Pausar" : "Activar"}</button>
         <button class="btn sm danger" data-act="delete-tunnel" data-id="${esc(t.id)}">Eliminar</button>
@@ -228,7 +245,18 @@ function tunnelRow(t) {
 
 function renderTunnels() {
   const { tunnels } = state.data;
-  $("#tunnels-sub").textContent = tunnels.length ? `(${tunnels.length})` : "";
+  const q = state.filters.tunnels.trim().toLowerCase();
+  const list = q
+    ? tunnels.filter((t) =>
+        [t.name, t.subdomain, t.url, t.nodeName, String(t.localPort), t.notes]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+    : tunnels;
+
+  $("#tunnels-sub").textContent = tunnels.length ? `(${list.length} de ${tunnels.length})` : "";
 
   if (!tunnels.length) {
     $("#tunnels-body").innerHTML = `<div class="empty">
@@ -239,11 +267,16 @@ function renderTunnels() {
     return;
   }
 
+  if (!list.length) {
+    $("#tunnels-body").innerHTML = `<div class="empty"><h3>Sin resultados</h3><p>Ningún túnel coincide con “${esc(state.filters.tunnels)}”.</p></div>`;
+    return;
+  }
+
   $("#tunnels-body").innerHTML = `<div class="table-wrap"><table class="table wide">
     <thead><tr>
-      <th>Túnel</th><th>URL pública</th><th>Destino local</th><th>Estado</th><th>Tráfico hoy</th><th></th>
+      <th>Túnel</th><th>URL pública</th><th>Destino local</th><th>Estado</th><th>Alta</th><th>Tráfico hoy</th><th></th>
     </tr></thead>
-    <tbody>${tunnels.map(tunnelRow).join("")}</tbody>
+    <tbody>${list.map(tunnelRow).join("")}</tbody>
   </table></div>`;
 }
 
@@ -261,6 +294,7 @@ function nodeRow(n) {
     </td>
     <td><span class="badge ${isLocal ? "ok" : "off"}">${isLocal ? "local" : "remoto"}</span></td>
     <td class="mono tiny">${n.onlineCount}/${n.tunnelCount}</td>
+    <td class="mono tiny" title="Fecha de alta">${esc(fmtDate(n.createdAt))}</td>
     <td>
       <div class="row-actions">
         <button class="btn sm primary" data-act="node-config" data-id="${esc(n.id)}">Token y config</button>
@@ -277,9 +311,25 @@ function nodeRow(n) {
 
 function renderNodes() {
   const { nodes } = state.data;
+  const q = state.filters.nodes.trim().toLowerCase();
+  const list = q
+    ? nodes.filter((n) =>
+        [n.name, n.slug, n.mode]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+    : nodes;
+
+  if (!list.length) {
+    $("#nodes-body").innerHTML = `<div class="empty"><h3>Sin resultados</h3><p>Ningún servidor coincide con “${esc(state.filters.nodes)}”.</p></div>`;
+    return;
+  }
+
   $("#nodes-body").innerHTML = `<div class="table-wrap"><table class="table">
-    <thead><tr><th>Servidor</th><th>Tipo</th><th>Túneles</th><th></th></tr></thead>
-    <tbody>${nodes.map(nodeRow).join("")}</tbody>
+    <thead><tr><th>Servidor</th><th>Tipo</th><th>Túneles</th><th>Alta</th><th></th></tr></thead>
+    <tbody>${list.map(nodeRow).join("")}</tbody>
   </table></div>`;
 }
 
@@ -501,8 +551,11 @@ function openModal({ title, body, submitLabel = "Guardar", onSubmit, hideCancel 
 function openTunnelModal(tunnel) {
   const { nodes, settings } = state.data;
   const local = nodes.find((n) => n.mode === "local") || nodes[0];
+  const hasRemote = nodes.some((n) => n.mode !== "local");
   const current = tunnel || {
-    nodeId: local?.id,
+    // Por defecto se propone crear el servidor de la empresa: no queremos que
+    // todos los túneles acaben en el nodo local por descuido.
+    nodeId: hasRemote ? local?.id : "__new",
     name: "",
     type: "http",
     localIP: "127.0.0.1",
@@ -515,12 +568,13 @@ function openTunnelModal(tunnel) {
     notes: "",
   };
 
-  const options = nodes
-    .map(
-      (n) =>
-        `<option value="${esc(n.id)}" ${current.nodeId === n.id ? "selected" : ""}>${esc(n.name)}${n.mode === "local" ? " (local)" : ""}</option>`,
-    )
-    .join("");
+  const options =
+    nodes
+      .map(
+        (n) =>
+          `<option value="${esc(n.id)}" ${current.nodeId === n.id ? "selected" : ""}>${esc(n.name)}${n.mode === "local" ? " (local)" : ""}</option>`,
+      )
+      .join("") + `<option value="__new" ${current.nodeId === "__new" ? "selected" : ""}>+ Servidor nuevo…</option>`;
 
   openModal({
     title: tunnel ? `Editar túnel · ${tunnel.name}` : "Nuevo túnel",
@@ -541,6 +595,12 @@ function openTunnelModal(tunnel) {
         </div>
       </div>
 
+      <div class="field is-hidden" data-new-server>
+        <label>Nombre del servidor nuevo</label>
+        <input type="text" name="newServerName" placeholder="VPS Lima, PC oficina…" maxlength="60" />
+        <span class="hint">Se da de alta ahora mismo y el túnel pasa a ese servidor. Luego descargas su instalador en «Servidores».</span>
+      </div>
+
       <div class="field">
         <label>Nombre del túnel</label>
         <input type="text" name="name" class="mono" value="${esc(current.name)}" placeholder="qpos" />
@@ -559,6 +619,12 @@ function openTunnelModal(tunnel) {
         <label>Dominios personalizados (opcional)</label>
         <input type="text" name="customDomains" class="mono" value="${esc((current.customDomains || []).join(", "))}" placeholder="app.otrodominio.com" />
         <span class="hint">Separados por coma. Deben apuntar a este servidor.</span>
+      </div>
+
+      <div class="field" data-when="http">
+        <label>Puertos públicos adicionales (opcional)</label>
+        <input type="text" name="publicPorts" class="mono" value="${esc((current.publicPorts || []).join(", "))}" placeholder="3001, 4173" />
+        <span class="hint">Se publican como https://sub.dominio:PUERTO con TLS. Habilitados: 3000, 3001, 4173, 5173.</span>
       </div>
 
       <div class="grid-2">
@@ -596,12 +662,13 @@ function openTunnelModal(tunnel) {
       </div>`,
     onSubmit: async (form) => {
       const fd = new FormData(form);
+      const nodeId = String(fd.get("nodeId") || "");
       const payload = {
-        nodeId: fd.get("nodeId"),
         name: fd.get("name"),
         type: fd.get("type"),
         subdomain: fd.get("subdomain") || "",
         customDomains: fd.get("customDomains") || "",
+        publicPorts: fd.get("publicPorts") || "",
         localIP: fd.get("localIP"),
         localPort: Number(fd.get("localPort")),
         remotePort: Number(fd.get("remotePort") || 0),
@@ -609,17 +676,39 @@ function openTunnelModal(tunnel) {
         enabled: fd.get("enabled") === "on",
         notes: fd.get("notes") || "",
       };
+      if (nodeId === "__new") {
+        const newServerName = String(fd.get("newServerName") || "").trim();
+        if (!newServerName) throw new Error("Escribe el nombre del servidor nuevo");
+        payload.newServerName = newServerName;
+      } else {
+        payload.nodeId = nodeId;
+      }
       if (tunnel) {
         await api(`/api/tunnels/${tunnel.id}`, { method: "PUT", body: payload });
       } else {
         await api("/api/tunnels", { method: "POST", body: payload });
       }
-      await afterMutation(tunnel ? "Túnel actualizado" : "Túnel creado");
+      await afterMutation(
+        tunnel
+          ? "Túnel actualizado"
+          : payload.newServerName
+            ? "Túnel creado · servidor nuevo dado de alta"
+            : "Túnel creado",
+      );
     },
   });
 
   // Visibilidad de campos según el tipo
   const form = $("#modal-root form");
+  const nodeSelect = form.querySelector('[name="nodeId"]');
+  const newServerField = form.querySelector("[data-new-server]");
+  if (nodeSelect && newServerField) {
+    const syncNode = () =>
+      newServerField.classList.toggle("is-hidden", nodeSelect.value !== "__new");
+    nodeSelect.addEventListener("change", syncNode);
+    syncNode();
+  }
+
   const typeSelect = form.querySelector('[name="type"]');
   const sync = () => {
     const isWeb = typeSelect.value === "http" || typeSelect.value === "https";
@@ -697,14 +786,23 @@ function openNodeConfigModal(node) {
 
       <div class="field">
         <label>1. Descarga la configuración</label>
-        <div class="grid-2">
-          <a class="btn ghost" href="${base}/frpc.toml">frpc.toml</a>
-          <a class="btn ghost" href="${base}/install.sh">Instalador Linux</a>
-          <a class="btn ghost" href="${base}/install.ps1">Instalador Windows</a>
-        </div>
+        ${
+          node.mode === "local"
+            ? `<div class="banner"><span>💡</span><div>
+                Este es <strong>el droplet del panel</strong>. Su frpc lo arranca el propio panel desde
+                <em>Agente local</em>. Su configuración <strong>no</strong> debe instalarse en otras máquinas:
+                crea un servidor para cada empresa y usa su instalador.
+                <button class="btn sm ghost" type="button" data-act="goto-agent">Abrir agente local</button>
+              </div></div>`
+            : `<div class="grid-2">
+                <a class="btn ghost" href="${base}/frpc.toml">frpc.toml</a>
+                <a class="btn ghost" href="${base}/install.sh">Instalador Linux</a>
+                <a class="btn ghost" href="${base}/install.ps1">Instalador Windows</a>
+              </div>`
+        }
       </div>
 
-      <div class="field">
+      <div class="field" ${node.mode === "local" ? 'style="display:none"' : ""}>
         <label>2. Ejecútala en el servidor</label>
         <div class="hint">
           Linux: <code class="mono">sudo bash install-frpc.sh</code><br />
@@ -818,6 +916,9 @@ async function handleAction(act, el) {
 
     case "goto-server":
       return switchTab("server");
+
+    case "goto-agent":
+      return switchTab("agent");
 
     case "save-settings": {
       const form = $("#settings-form");
@@ -991,6 +1092,22 @@ async function boot() {
   }
 
   startLogStream();
+
+  const tunnelsSearch = $("#tunnels-search");
+  if (tunnelsSearch) {
+    tunnelsSearch.addEventListener("input", () => {
+      state.filters.tunnels = tunnelsSearch.value;
+      renderTunnels();
+    });
+  }
+
+  const nodesSearch = $("#nodes-search");
+  if (nodesSearch) {
+    nodesSearch.addEventListener("input", () => {
+      state.filters.nodes = nodesSearch.value;
+      renderNodes();
+    });
+  }
 
   state.timer = setInterval(() => {
     if (document.querySelector(".modal")) return;

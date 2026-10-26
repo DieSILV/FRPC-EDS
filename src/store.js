@@ -5,6 +5,29 @@ import { httpError } from "./errors.js";
 
 export const TUNNEL_TYPES = ["http", "https", "tcp", "udp"];
 
+/**
+ * Puertos públicos extra que Caddy sabe terminar con TLS (ver /etc/caddy/Caddyfile).
+ * Cada uno se publica como https://<subdominio>.<dominio>:<puerto>
+ */
+export const SUPPORTED_PUBLIC_PORTS = [3000, 3001, 4173, 5173];
+
+/**
+ * Subdominios que no puede usar un túnel: el panel (central), la web
+ * principal (www/apex) y los nombres de infraestructura DNS/servicios.
+ */
+export const RESERVED_SUBDOMAINS = new Set([
+  "www",
+  "central",
+  "panel",
+  "admin",
+  "api",
+  "ns1",
+  "ns2",
+  "ns3",
+  "mail",
+  "ftp",
+]);
+
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
 const PROXY_NAME_RE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
@@ -28,6 +51,7 @@ export function defaultSettings() {
     vhostHTTPSPort: 443,
     subDomainHost: "",
     publicScheme: "http",
+    panelUrl: "",
     authToken: newSecret(),
     adminApi: { host: "127.0.0.1", port: 7500, user: "admin", password: newSecret() },
     frpcAdminPort: 7400,
@@ -84,6 +108,7 @@ function ensure(db) {
   s.vhostHTTPSPort = num(s.vhostHTTPSPort, d.vhostHTTPSPort, 0);
   s.subDomainHost = str(s.subDomainHost, "").trim().toLowerCase();
   s.publicScheme = s.publicScheme === "https" ? "https" : "http";
+  s.panelUrl = str(s.panelUrl, "").trim().replace(/\/+$/, "");
   s.authToken = str(s.authToken, "").trim() || d.authToken;
   s.frpcAdminPort = num(s.frpcAdminPort, d.frpcAdminPort, 1);
   s.frpcAdminPassword = str(s.frpcAdminPassword, "").trim() || d.frpcAdminPassword;
@@ -120,6 +145,9 @@ function ensure(db) {
     t.localIP = str(t.localIP, "127.0.0.1");
     t.localPort = num(t.localPort, 80, 1);
     t.remotePort = t.remotePort == null ? null : num(t.remotePort, null, 1);
+    t.publicPorts = Array.isArray(t.publicPorts)
+      ? t.publicPorts.map((p) => Number(p)).filter((p) => SUPPORTED_PUBLIC_PORTS.includes(p))
+      : [];
     t.subdomain = str(t.subdomain, "").trim().toLowerCase();
     t.customDomains = Array.isArray(t.customDomains) ? t.customDomains : [];
     t.healthCheck = t.healthCheck === true;
@@ -249,6 +277,25 @@ function parseDomainList(input) {
   return [];
 }
 
+/** Lista de puertos públicos adicionales (validada contra los soportados). */
+function parsePublicPorts(input) {
+  const list = Array.isArray(input) ? input : String(input ?? "").split(/[\s,;]+/);
+  const out = [];
+  for (const raw of list) {
+    const value = String(raw).trim();
+    if (!value) continue;
+    const n = Number(value);
+    if (!SUPPORTED_PUBLIC_PORTS.includes(n)) {
+      throw httpError(
+        400,
+        `El puerto ${value} no está habilitado. Disponibles: ${SUPPORTED_PUBLIC_PORTS.join(", ")}`,
+      );
+    }
+    if (!out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 function normalizeTunnel(db, input, existing) {
   let nodeId = String(input.nodeId ?? existing?.nodeId ?? "");
   if (!nodeId) {
@@ -269,11 +316,18 @@ function normalizeTunnel(db, input, existing) {
   let subdomain = "";
   let customDomains = [];
   let remotePort = null;
+  let publicPorts = [];
 
   if (type === "http" || type === "https") {
     subdomain = String(input.subdomain ?? existing?.subdomain ?? "").trim().toLowerCase();
     if (subdomain && !SLUG_RE.test(subdomain)) {
       throw httpError(400, "El subdominio solo admite letras, números y guiones (sin puntos)");
+    }
+    if (subdomain && RESERVED_SUBDOMAINS.has(subdomain)) {
+      throw httpError(
+        400,
+        `El subdominio "${subdomain}" está reservado para el panel/DNS. Usa otro nombre.`,
+      );
     }
     customDomains = parseDomainList(input.customDomains ?? existing?.customDomains ?? []);
     for (const d of customDomains) {
@@ -293,6 +347,14 @@ function normalizeTunnel(db, input, existing) {
           t.customDomains?.some((d) => customDomains.includes(d))),
     );
     if (clash) throw httpError(409, `El dominio ya está usado por el túnel "${clash.name}"`);
+
+    publicPorts = parsePublicPorts(input.publicPorts ?? existing?.publicPorts ?? []);
+    for (const port of publicPorts) {
+      const busy = db.tunnels.find(
+        (t) => t.id !== existing?.id && (t.publicPorts || []).includes(port),
+      );
+      if (busy) throw httpError(409, `El puerto ${port} ya lo usa el túnel "${busy.name}"`);
+    }
   } else {
     remotePort = Number(input.remotePort ?? existing?.remotePort ?? 0);
     if (!Number.isInteger(remotePort) || remotePort < 0 || remotePort > 65535) {
@@ -326,6 +388,7 @@ function normalizeTunnel(db, input, existing) {
     subdomain,
     customDomains,
     remotePort: type === "http" || type === "https" ? null : remotePort,
+    publicPorts,
     enabled: (input.enabled ?? existing?.enabled ?? true) !== false,
     healthCheck: (input.healthCheck ?? existing?.healthCheck ?? false) === true,
     basicAuth: { user, password: user ? String(basicAuth.password ?? "") : "" },
@@ -401,6 +464,11 @@ export function updateSettings(patch = {}) {
     }
     if (patch.publicScheme !== undefined) {
       s.publicScheme = patch.publicScheme === "https" ? "https" : "http";
+    }
+    if (patch.panelUrl !== undefined) {
+      s.panelUrl = String(patch.panelUrl || "")
+        .trim()
+        .replace(/\/+$/, "");
     }
     if (patch.frpcAdminPort !== undefined) {
       s.frpcAdminPort = num(patch.frpcAdminPort, s.frpcAdminPort, 1);

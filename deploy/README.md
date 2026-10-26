@@ -4,7 +4,7 @@ Arquitectura objetivo:
 
 ```
                      Internet
-                        │  *.eds.dev
+                        │  *.nexus-pro.pe
                         ▼
         ┌───────────────────────────────┐
         │ Droplet Ubuntu (DigitalOcean) │
@@ -31,25 +31,41 @@ Arquitectura objetivo:
 ## 1. Crear el droplet
 
 - Ubuntu 24.04 LTS, 1 vCPU / 1 GB es suficiente para decenas de túneles.
-- Anota la IP pública, por ejemplo `164.90.10.20`.
+- IP pública del droplet del panel: **`137.184.226.242`**.
 
 ## 2. DNS
 
-En el panel DNS de DigitalOcean (o Cloudflare) crea:
+Dominio base del proyecto: **`nexus-pro.pe`** (zona ya creada en
+DigitalOcean → *Networking → Domains*).
 
-| Tipo | Nombre | Valor        | TTL |
-| ---- | ------ | ------------ | --- |
-| A    | `@`    | `<IP>`       | 300 |
-| A    | `*`    | `<IP>`       | 300 |
+En esa zona debe existir:
 
-El registro **wildcard `*`** es lo que hace que `cualquiercosa.eds.dev`
-llegue al servidor. Sin él, los subdominios no resuelven.
+| Tipo | Nombre | Valor             | TTL |
+| ---- | ------ | ----------------- | --- |
+| A    | `*`    | `137.184.226.242` | 300 |
+| A    | `@`    | `167.172.133.217` | 300 |
+| CNAME| `www`  | `nexus-pro.pe`    | 300 |
+
+El registro **wildcard `*`** es lo que hace que `cualquiercosa.nexus-pro.pe`
+llegue al droplet del panel. Sin él, los subdominios no resuelven.
+
+> El wildcard **no** cubre el apex (`nexus-pro.pe`) ni dos niveles
+> (`a.b.nexus-pro.pe`). frp solo genera subdominios de un nivel, así que el
+> apex puede seguir apuntando a otro servidor (la web principal) sin que
+> choque con los túneles.
 
 Verifica tras propagarse:
 
 ```bash
-dig +short test.eds.dev
+dig +short qpos.nexus-pro.pe     # → 137.184.226.242
+dig +short central.nexus-pro.pe  # → 137.184.226.242
 ```
+
+**No hace falta ningún registro extra para `central.nexus-pro.pe`**: es un
+subdominio de un nivel, así que lo cubre el wildcard `*`. Los túneles de los
+clientes usan *otros* nombres (`qpos`, `leo`, `app`…); el panel y el DNS se
+reservan `central`, `www`, `panel`, `admin`, `api`, `ns1`, `ns2`, `ns3`, `mail`
+y `ftp` (el panel los rechaza si los intentas usar en un túnel).
 
 ## 3. Firewall
 
@@ -117,11 +133,11 @@ Los logs: `journalctl -u frps -f` y `journalctl -u panel -f`.
 **Opción A — túnel SSH (más seguro, sin exponer nada):**
 
 ```bash
-ssh -L 7800:127.0.0.1:7800 root@164.90.10.20
+ssh -L 7800:127.0.0.1:7800 root@137.184.226.242
 # luego abre http://127.0.0.1:7800 en tu equipo
 ```
 
-**Opción B — publicarlo con Caddy** en `panel.eds.dev`
+**Opción B — publicarlo con Caddy** en `central.nexus-pro.pe`
 (ya incluido en `deploy/Caddyfile`). El panel detecta `X-Forwarded-Proto`
 y marca la cookie como `Secure`.
 
@@ -138,11 +154,11 @@ sudo apt update && sudo apt install caddy
 
 Copia `deploy/Caddyfile` a `/etc/caddy/Caddyfile` y elige una opción:
 
-- **A (recomendada):** certificado wildcard `*.eds.dev` con DNS-01.
-  Requiere Caddy con el plugin del proveedor:
+- **A (recomendada):** certificado wildcard `*.nexus-pro.pe` con DNS-01.
+  Requiere Caddy con el plugin de DigitalOcean:
   ```bash
-  xcaddy build --with github.com/caddy-dns/cloudflare
-  export CF_API_TOKEN=...
+  xcaddy build --with github.com/caddy-dns/digitalocean
+  export DO_AUTH_TOKEN=...   # token de DO con scope read/write en DNS
   ```
 - **B (sin plugins):** TLS bajo demanda por subdominio. Caddy consulta
   `http://127.0.0.1:7800/api/tls/ask` y solo emite certificado si el
@@ -158,8 +174,8 @@ Entra al panel y en la pestaña **Servidor**:
 
 | Campo                       | Valor                                          |
 | --------------------------- | ---------------------------------------------- |
-| Dirección pública           | IP del droplet o `eds.dev`                     |
-| Dominio base                | `eds.dev`                                      |
+| Dirección pública           | `137.184.226.242`                               |
+| Dominio base                | `nexus-pro.pe`                                  |
 | Puerto del túnel            | `7000`                                         |
 | Puerto HTTP virtual         | `8080`                                         |
 | Puerto HTTPS virtual        | `0` (Caddy termina TLS)                        |
@@ -226,7 +242,7 @@ Pestaña **Túneles** → *Nuevo túnel*:
 
 - Servidor: el nodo donde corre el servicio.
 - Tipo `http`, subdominio `qpos`, destino `127.0.0.1:8000`.
-- Resultado: `https://qpos.eds.dev` (vía Caddy) → `qpos.eds.dev:8080` en frps.
+- Resultado: `https://qpos.nexus-pro.pe` (vía Caddy) → `qpos.nexus-pro.pe:8080` en frps.
 
 Los cambios en túneles del **servidor local** se aplican en caliente
 (`/api/reload` de frpc). Los de nodos remotos requieren re-descargar el
@@ -243,5 +259,55 @@ Los cambios en túneles del **servidor local** se aplican en caliente
   clave del canal de control; lo genera el panel y no se reparte a mano.
 - **Nombres de proxy únicos**: el panel los hace únicos porque frps los usa
   como clave global.
-- **Verificación**: `curl -H "Host: qpos.eds.dev" http://127.0.0.1:8080`
+- **Verificación**: `curl -H "Host: qpos.nexus-pro.pe" http://127.0.0.1:8080`
   en el droplet prueba el enrutamiento de frps sin pasar por DNS.
+
+---
+
+## Alta real (droplet `137.184.226.242`)
+
+Estado instalado el 2026-10-26:
+
+| Componente | Detalle |
+| --- | --- |
+| Node.js | 22.23.4 (`/usr/bin/node`, vía NodeSource) |
+| Caddy | 2.11.7 (repo oficial de Cloudsmith, servicio `caddy`) |
+| frp | 0.71.1 en `/home/FRPC-EDS/bin/frp` |
+| Usuario | `frp` (sin shell), dueño del proyecto |
+| Enlace | `/opt/frpc-eds` → `/home/FRPC-EDS` |
+| Servicios | `panel`, `frps`, `caddy` (todos `enabled`) |
+| Certificados | **TLS bajo demanda** (HTTP-01) — Opción B |
+| Firewall | ufw activo: `22`, `80/443`, `7000` |
+
+Se usó la **Opción B (on-demand)** porque no hay token de la API de
+DigitalOcean en el servidor. Ventaja: SSL para todos los subdominios sin
+credenciales. Limitación: un certificado por subdominio (no wildcard).
+
+### Pasar a wildcard (Opción A) más adelante
+
+```bash
+caddy add-package github.com/caddy-dns/digitalocean
+systemctl restart caddy
+export DO_AUTH_TOKEN=<token con read/write en DNS>
+```
+
+Y sustituir en `/etc/caddy/Caddyfile` el bloque `https://` por:
+
+```caddyfile
+*.nexus-pro.pe {
+	tls {
+		dns digitalocean {env.DO_AUTH_TOKEN}
+	}
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080
+}
+```
+
+### Credenciales del panel
+
+Las genera la instalación y viven en `/home/FRPC-EDS/.env` (modo `600`):
+
+```bash
+sudo grep -E 'PANEL_(USER|PASSWORD)' /home/FRPC-EDS/.env
+```
+

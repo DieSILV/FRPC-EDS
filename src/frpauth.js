@@ -100,13 +100,19 @@ function handleNewProxy(content) {
 
   const name = String(content?.name || content?.proxy_name || "");
   const db = store.read();
-  const tunnel = db.tunnels.find((t) => t.name === name);
+  // Los puertos publicos adicionales generan proxies "<tunel>__p<puerto>".
+  const derived = /^(.*)__p(\d+)$/.exec(name);
+  const baseName = derived ? derived[1] : name;
+  const tunnel = db.tunnels.find((t) => t.name === baseName);
 
   if (!tunnel) {
     return reject(`El proxy "${name}" no está definido en el panel`);
   }
   if (tunnel.nodeId !== node.id) {
     return reject(`El proxy "${name}" pertenece a otro servidor`);
+  }
+  if (derived && !(tunnel.publicPorts || []).includes(Number(derived[2]))) {
+    return reject(`El puerto ${derived[2]} no está habilitado para "${baseName}"`);
   }
 
   return { reject: false, unchange: true };

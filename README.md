@@ -125,11 +125,20 @@ En cada conexión frps llama al plugin del panel (`[[httpPlugins]]`, op `Login`)
 ## Flujo de uso
 
 1. **Servidores** → *Agregar servidor* (uno por máquina que publicará algo).
+   También puedes saltarte este paso: en *Nuevo túnel* elige
+   **«+ Servidor nuevo…»** y escribe el nombre; el servidor se crea al vuelo.
 2. Descarga `install.sh` / `install.ps1` y ejecútalo **en esa máquina**:
    instala `frpc` y lo deja como servicio (`frpc-eds`).
+   El instalador añade además una **auto-sincronización**: cada 60 s el cliente
+   descarga su `frpc.toml` desde el panel (con su propio token) y reinicia frpc
+   solo si cambió. **No hay que volver a descargar nada** al crear túneles.
 3. **Túneles** → *Nuevo túnel*: servidor, tipo (`http`/`https`/`tcp`/`udp`),
    subdominio, destino local (`127.0.0.1:8000`).
 4. El túnel aparece como *en línea* cuando el cliente conecta y frps lo registra.
+
+Cada lista tiene **buscador** y muestra la **fecha de alta** de cada túnel y
+servidor. Los subdominios `central`, `www`, `panel`, `admin`, `api`, `ns1`-`ns3`,
+`mail` y `ftp` están reservados.
 
 Para el nodo **local** (donde corre el panel), pestaña **Agente local** →
 *Iniciar agente*: el panel lanza `frpc` y aplica los cambios de túneles en
