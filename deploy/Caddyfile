@@ -1,73 +1,155 @@
 # ==================================================================
 # FRPC-EDS - Caddyfile  (dominio base: nexus-pro.pe)
 #
+# Equivale a la configuración del droplet en producción.
 # Caddy termina TLS y reenvía a frps (vhost HTTP) en 127.0.0.1:8080.
-# Deja frps escuchando el vhost SOLO en localhost:
-#   proxyBindAddr = "127.0.0.1"
-# y vhostHTTPPort = 8080 en la pestaña «Servidor» del panel.
+#
+#   https://central.nexus-pro.pe         -> panel :7800
+#   https://<sub>.nexus-pro.pe           -> túnel :8080
+#   https://<sub>.nexus-pro.pe:<puerto>  -> túnel :8080 (Host reescrito)
+#
+# TLS: bajo demanda (HTTP-01). Caddy pide el certificado la primera vez que
+# alguien visita un subdominio y solo si el panel lo autoriza
+# (GET /api/tls/ask). No necesita plugins ni token de DigitalOcean.
+#
+# Listas blancas/negras: en cada petición Caddy consulta al panel
+# (forward_auth -> GET /api/guard). 2xx = permitir, 403 = bloquear.
 #
 # Ruta: /etc/caddy/Caddyfile   →   systemctl reload caddy
 # ==================================================================
 
 {
 	email tu-correo@ejemplo.com
+
+	# Solo TCP (h1/h2). Evita que el navegador intente QUIC por UDP 443,
+	# que en muchas redes se descarta y provoca "Failed to fetch".
+	servers {
+		protocols h1 h2
+	}
+
+	on_demand_tls {
+		ask http://127.0.0.1:7800/api/tls/ask
+	}
 }
 
 # ------------------------------------------------------------------
-# OPCIÓN A (recomendada): certificado wildcard *.nexus-pro.pe
-# Requiere Caddy compilado con el plugin DNS de DigitalOcean:
-#   xcaddy build --with github.com/caddy-dns/digitalocean
-# y la variable de entorno DO_AUTH_TOKEN (token de DO con permiso
-# read/write sobre los registros DNS de la zona nexus-pro.pe).
-#
-# DNS necesario en DigitalOcean:
-#   A  *   →  137.184.226.242    (túneles)
-#   A  @   →  167.172.133.217    (web principal; el wildcard NO cubre el apex)
+# Panel de control
 # ------------------------------------------------------------------
-
-*.nexus-pro.pe, nexus-pro.pe {
-	tls {
-		dns digitalocean {env.DO_AUTH_TOKEN}
+central.nexus-pro.pe {
+	log {
+		output stderr
+		format console
 	}
 	encode zstd gzip
-	reverse_proxy 127.0.0.1:8080 {
-		header_up X-Real-IP {remote_host}
+	reverse_proxy 127.0.0.1:7800 {
 		flush_interval -1
 	}
 }
 
-# Panel de control en central.nexus-pro.pe (lo cubre el propio wildcard).
-# Es más específico que el wildcard, así que Caddy lo prioriza.
-central.nexus-pro.pe {
+# ------------------------------------------------------------------
+# Túneles de clientes — https://<sub>.nexus-pro.pe
+# ------------------------------------------------------------------
+https:// {
 	tls {
-		dns digitalocean {env.DO_AUTH_TOKEN}
+		on_demand
 	}
-	reverse_proxy 127.0.0.1:7800
+	encode zstd gzip
+	forward_auth 127.0.0.1:7800 {
+		uri /api/guard
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 443
+		flush_interval -1
+	}
 }
 
 # ------------------------------------------------------------------
-# OPCIÓN B (sin plugins): certificado por subdominio bajo demanda.
-# Caddy pide un certificado la primera vez que alguien visita
-# <sub>.nexus-pro.pe y solo si el panel confirma que el túnel existe
-# (endpoint /api/tls/ask). Comenta la Opción A y descomenta esto.
+# Puertos públicos adicionales por túnel: https://<host>:<puerto>
+# El Host se reescribe a "p<puerto>-<host>" para que frps lo enrute al
+# proxy correcto; hostHeaderRewrite devuelve al servicio el Host real.
+# Deben coincidir con SUPPORTED_PUBLIC_PORTS (src/store.js).
 # ------------------------------------------------------------------
-#
-# {
-# 	email tu-correo@ejemplo.com
-# 	on_demand_tls {
-# 		ask http://127.0.0.1:7800/api/tls/ask
-# 	}
-# }
-#
-# http:// {
-# 	redir https://{host}{uri} permanent
-# }
-#
-# :443 {
-# 	tls {
-# 		on_demand
-# 	}
-# 	reverse_proxy 127.0.0.1:8080 {
-# 		flush_interval -1
-# 	}
-# }
+https://:3000 {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	forward_auth 127.0.0.1:7800 {
+		uri /api/guard
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host p3000-{http.request.host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 3000
+		flush_interval -1
+	}
+}
+
+https://:3001 {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	forward_auth 127.0.0.1:7800 {
+		uri /api/guard
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host p3001-{http.request.host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 3001
+		flush_interval -1
+	}
+}
+
+https://:4173 {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	forward_auth 127.0.0.1:7800 {
+		uri /api/guard
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host p4173-{http.request.host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 4173
+		flush_interval -1
+	}
+}
+
+https://:5173 {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	forward_auth 127.0.0.1:7800 {
+		uri /api/guard
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host p5173-{http.request.host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 5173
+		flush_interval -1
+	}
+}
+
+# HTTP → HTTPS
+http:// {
+	redir https://{host}{uri} permanent
+}
