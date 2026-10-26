@@ -807,11 +807,7 @@ function openNodeModal(node) {
         <input type="text" name="name" value="${esc(node?.name || "")}" placeholder="Servidor de desarrollo" required maxlength="60" />
       </div>
 
-      <div class="field">
-        <label>IPs autorizadas del servidor (opcional)</label>
-        <input type="text" name="allowedIps" class="mono" value="${esc((node?.allowedIps || []).join(", "))}" placeholder="38.137.206.45" />
-        <span class="hint">Si pones alguna, esta máquina solo podrá conectar desde esas IPs. Vacío = cualquiera con el token.</span>
-      </div>
+      ${ipListField("allowedIps", "IPs autorizadas del servidor (opcional)", node?.allowedIps, "Si pones alguna, esta máquina solo podrá conectar desde esas IPs. Vacío = cualquiera con el token.", "38.137.206.45")}
       ${
         node
           ? ""
@@ -829,7 +825,7 @@ function openNodeModal(node) {
       if (node) {
         await api(`/api/nodes/${node.id}`, {
           method: "PUT",
-          body: { name: fd.get("name"), allowedIps: fd.get("allowedIps") || "" },
+          body: { name: fd.get("name"), allowedIps: readIpList(form, "allowedIps") },
         });
       } else {
         await api("/api/nodes", {
@@ -837,13 +833,69 @@ function openNodeModal(node) {
           body: {
             name: fd.get("name"),
             mode: fd.get("mode") || "remote",
-            allowedIps: fd.get("allowedIps") || "",
+            allowedIps: readIpList(form, "allowedIps"),
           },
         });
       }
       await afterMutation(node ? "Servidor actualizado" : "Servidor agregado");
     },
   });
+  bindIpLists($("#modal-root form"));
+}
+
+function ipChip(value) {
+  return `<span class="ip-chip" data-value="${esc(value)}">${esc(value)}<button type="button" class="ip-x" aria-label="Quitar">×</button></span>`;
+}
+
+/** Campo de lista de IPs como registros individuales (chips), no texto con comas. */
+function ipListField(name, label, values, hint, placeholder) {
+  return `<div class="field">
+    <label>${esc(label)}</label>
+    <div class="iplist" data-iplist="${esc(name)}">
+      <div class="iplist-chips">${(values || []).map(ipChip).join("")}</div>
+      <input type="text" class="mono" data-iplist-input placeholder="${esc(placeholder || "Añadir IP o rango y pulsar Enter")}" />
+    </div>
+    <span class="hint">${esc(hint || "")}</span>
+  </div>`;
+}
+
+function bindIpLists(form) {
+  if (!form) return;
+  form.querySelectorAll("[data-iplist]").forEach((box) => {
+    const input = box.querySelector("[data-iplist-input]");
+    const chips = box.querySelector(".iplist-chips");
+    const add = (raw) => {
+      const value = String(raw || "").trim();
+      if (!value) return;
+      const dup = [...chips.querySelectorAll(".ip-chip")].some((c) => c.dataset.value === value);
+      if (!dup) chips.insertAdjacentHTML("beforeend", ipChip(value));
+    };
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === ",") {
+        event.preventDefault();
+        add(input.value);
+        input.value = "";
+      } else if (event.key === "Backspace" && !input.value) {
+        const last = chips.lastElementChild;
+        if (last) last.remove();
+      }
+    });
+    input.addEventListener("blur", () => {
+      add(input.value);
+      input.value = "";
+    });
+    box.addEventListener("click", (event) => {
+      const x = event.target.closest(".ip-x");
+      if (x) x.closest(".ip-chip").remove();
+    });
+  });
+}
+
+/** Lee los chips de una lista de IPs del formulario. */
+function readIpList(form, name) {
+  const box = form.querySelector(`[data-iplist="${name}"]`);
+  if (!box) return [];
+  return [...box.querySelectorAll(".ip-chip")].map((c) => c.dataset.value);
 }
 
 function openAccessModal(tunnel) {
@@ -856,17 +908,9 @@ function openAccessModal(tunnel) {
         Acepta IP exacta o rango CIDR IPv4 (ej. <code class="mono">190.40.0.0/16</code>).
       </div></div>
 
-      <div class="field">
-        <label>IPs permitidas · lista blanca</label>
-        <input type="text" name="ipAllow" class="mono" value="${esc((tunnel.ipAllow || []).join(", "))}" placeholder="38.137.206.45, 190.40.0.0/16" />
-        <span class="hint">Si pones alguna, solo esas IPs pueden entrar.</span>
-      </div>
+      ${ipListField("ipAllow", "IPs permitidas · lista blanca", tunnel.ipAllow, "Si pones alguna, solo esas IPs pueden entrar.", "38.137.206.45")}
 
-      <div class="field">
-        <label>IPs bloqueadas · lista negra</label>
-        <input type="text" name="ipDeny" class="mono" value="${esc((tunnel.ipDeny || []).join(", "))}" placeholder="1.2.3.4" />
-        <span class="hint">Tienen prioridad sobre la lista blanca.</span>
-      </div>
+      ${ipListField("ipDeny", "IPs bloqueadas · lista negra", tunnel.ipDeny, "Tienen prioridad sobre la lista blanca.", "1.2.3.4")}
 
       <div class="grid-2">
         <div class="field">
@@ -884,8 +928,8 @@ function openAccessModal(tunnel) {
       await api(`/api/tunnels/${tunnel.id}`, {
         method: "PUT",
         body: {
-          ipAllow: fd.get("ipAllow") || "",
-          ipDeny: fd.get("ipDeny") || "",
+          ipAllow: readIpList(form, "ipAllow"),
+          ipDeny: readIpList(form, "ipDeny"),
           basicAuth: {
             user: fd.get("basicUser") || "",
             password: fd.get("basicPass") || "",
@@ -895,6 +939,7 @@ function openAccessModal(tunnel) {
       await afterMutation("Accesos actualizados");
     },
   });
+  bindIpLists($("#modal-root form"));
 }
 
 function openNodeAccessModal(node) {
@@ -906,20 +951,16 @@ function openNodeAccessModal(node) {
         Limita desde qué IP puede conectar el <code class="mono">frpc</code> de esta máquina.
         Aunque el token se filtre, no servirá desde otra IP.
       </div></div>
-      <div class="field">
-        <label>IPs autorizadas (opcional)</label>
-        <input type="text" name="allowedIps" class="mono" value="${esc((node.allowedIps || []).join(", "))}" placeholder="38.137.206.45" />
-        <span class="hint">Vacío = cualquiera que tenga el token de esta máquina.</span>
-      </div>`,
+      ${ipListField("allowedIps", "IPs autorizadas (opcional)", node.allowedIps, "Vacío = cualquiera que tenga el token de esta máquina.", "38.137.206.45")}`,
     onSubmit: async (form) => {
-      const fd = new FormData(form);
       await api(`/api/nodes/${node.id}`, {
         method: "PUT",
-        body: { allowedIps: fd.get("allowedIps") || "" },
+        body: { allowedIps: readIpList(form, "allowedIps") },
       });
       await afterMutation("IPs del servidor actualizadas");
     },
   });
+  bindIpLists($("#modal-root form"));
 }
 
 function openNodeConfigModal(node) {
