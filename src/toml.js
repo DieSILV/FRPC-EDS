@@ -64,6 +64,11 @@ export function buildFrpcToml(s, node, tunnels) {
   L.push(`metadatas.node = ${q(node.slug)}`);
   L.push("");
   L.push("transport.tls.enable = true");
+  L.push("# Reconexion: detecta caidas de red en ~30 s y NO termina si el servidor");
+  L.push("# no responde al arrancar (reintenta indefinidamente).");
+  L.push("transport.heartbeatInterval = 10");
+  L.push("transport.heartbeatTimeout = 30");
+  L.push("loginFailExit = false");
   L.push('log.level = "info"');
   L.push("log.maxDays = 3");
 

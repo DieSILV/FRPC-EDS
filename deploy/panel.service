@@ -2,6 +2,7 @@
 Description=FRPC-EDS - panel de control
 After=network-online.target frps.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -12,7 +13,7 @@ EnvironmentFile=/opt/frpc-eds/.env
 # Ajusta la ruta si Node está instalado en otro sitio (which node)
 ExecStart=/usr/bin/node /opt/frpc-eds/src/index.js
 Restart=always
-RestartSec=5
+RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 

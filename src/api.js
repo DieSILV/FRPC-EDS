@@ -337,12 +337,14 @@ cat > /etc/systemd/system/frpc-eds.service <<'FRPUNIT'
 Description=FRPC-EDS client (${safeName})
 After=network-online.target
 Wants=network-online.target
+# Sin limite de reintentos: si el servidor o la red caen, reintenta siempre
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/opt/frpc-eds/frpc -c /opt/frpc-eds/frpc.toml
 Restart=always
-RestartSec=5
+RestartSec=3
 LimitNOFILE=1048576
 
 [Install]

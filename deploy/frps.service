@@ -3,6 +3,7 @@ Description=FRPC-EDS - servidor FRP (frps)
 Documentation=https://gofrp.org
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,7 +12,7 @@ Group=frp
 WorkingDirectory=/opt/frpc-eds/data/runtime
 ExecStart=/opt/frpc-eds/bin/frp/frps -c /opt/frpc-eds/data/runtime/frps.toml
 Restart=always
-RestartSec=5
+RestartSec=3
 
 # Permite escuchar en 80/443 sin ejecutar como root
 AmbientCapabilities=CAP_NET_BIND_SERVICE

@@ -589,7 +589,10 @@ function openTunnelModal(tunnel) {
           <label>Tipo</label>
           <select name="type">
             ${["http", "https", "tcp", "udp"]
-              .map((t) => `<option value="${t}" ${current.type === t ? "selected" : ""}>${t.toUpperCase()}</option>`)
+              .map((t) => {
+                const off = t === "https" && !settings.vhostHTTPSPort;
+                return `<option value="${t}" ${current.type === t ? "selected" : ""} ${off ? "disabled" : ""}>${t.toUpperCase()}${off ? " (requiere puerto HTTPS virtual)" : ""}</option>`;
+              })
               .join("")}
           </select>
         </div>

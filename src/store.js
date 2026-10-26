@@ -305,6 +305,15 @@ function normalizeTunnel(db, input, existing) {
 
   const type = TUNNEL_TYPES.includes(input.type) ? input.type : existing?.type || "http";
 
+  // frps rechaza los proxies `https` si no hay vhost HTTPS configurado:
+  //   "type [https] not supported when vhost https port is not set"
+  if (type === "https" && !db.settings.vhostHTTPSPort) {
+    throw httpError(
+      400,
+      "El tipo HTTPS requiere «Puerto HTTPS virtual» en la pestaña Servidor. Para una web normal usa HTTP: Caddy ya pone el candado.",
+    );
+  }
+
   const localIP = String(input.localIP ?? existing?.localIP ?? "127.0.0.1").trim();
   if (!HOST_RE.test(localIP)) throw httpError(400, "La IP/host local no es válida");
 
