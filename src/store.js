@@ -425,12 +425,6 @@ function normalizeTunnel(db, input, existing) {
     publicPorts = parsePublicPorts(input.publicPorts ?? existing?.publicPorts ?? []);
     ipAllow = parseIpList(input.ipAllow ?? existing?.ipAllow ?? []);
     ipDeny = parseIpList(input.ipDeny ?? existing?.ipDeny ?? []);
-    for (const port of publicPorts) {
-      const busy = db.tunnels.find(
-        (t) => t.id !== existing?.id && (t.publicPorts || []).includes(port),
-      );
-      if (busy) throw httpError(409, `El puerto ${port} ya lo usa el túnel "${busy.name}"`);
-    }
   } else {
     remotePort = Number(input.remotePort ?? existing?.remotePort ?? 0);
     if (!Number.isInteger(remotePort) || remotePort < 0 || remotePort > 65535) {

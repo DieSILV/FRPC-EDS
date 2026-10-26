@@ -125,17 +125,29 @@ export function buildFrpcToml(s, node, tunnels) {
 
     if (t.notes) L.push(`metadatas.note = ${q(t.notes)}`);
 
-    // Puertos publicos adicionales: Caddy termina TLS en https://<host>:<puerto>
-    // y reenvía a 127.0.0.1:(puerto+10000), que es este proxy TCP.
+    // Puertos publicos adicionales: https://<host>:<puerto>.
+    // Caddy termina TLS en ese puerto y reescribe el Host a "p<puerto>.<host>"
+    // para que frps enrute al proxy correcto. hostHeaderRewrite devuelve al
+    // servicio local el Host real (<host>:<puerto>).
     for (const port of t.publicPorts || []) {
+      if (!s.subDomainHost || !t.subdomain) continue;
+      const publicHost = `${t.subdomain}.${s.subDomainHost}`;
+      const routedSub = `p${port}-${t.subdomain}`;
+      const realHost = `${publicHost}:${port}`;
       L.push("");
-      L.push(`# Puerto publico ${port} (https://<host>:${port})`);
+      L.push(`# Puerto publico ${port}: https://${realHost}`);
       L.push("[[proxies]]");
       L.push(`name = ${q(`${t.name}__p${port}`)}`);
-      L.push('type = "tcp"');
+      L.push('type = "http"');
       L.push(`localIP = ${q(t.localIP)}`);
       L.push(`localPort = ${port}`);
-      L.push(`remotePort = ${port + 10000}`);
+      L.push(`subdomain = ${q(routedSub)}`);
+      L.push(`hostHeaderRewrite = ${q(realHost)}`);
+      if (s.publicScheme === "https") {
+        L.push('requestHeaders.set.X-Forwarded-Proto = "https"');
+        L.push(`requestHeaders.set.X-Forwarded-Host = ${q(realHost)}`);
+        L.push(`requestHeaders.set.X-Forwarded-Port = ${q(String(port))}`);
+      }
     }
   }
 
