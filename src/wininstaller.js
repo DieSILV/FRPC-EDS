@@ -56,18 +56,29 @@ function downloadBlock() {
   return `$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $zipName = "frp_\${Version}_windows_$arch"
 
+# Borra temporales sin poder abortar la instalacion (la limpieza es prescindible).
+function Remove-Quiet([string]$p) {
+  try {
+    if ($p -and (Test-Path -LiteralPath $p -ErrorAction SilentlyContinue)) {
+      Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  } catch { }
+}
+
 if (-not (Test-Path -LiteralPath $Exe)) {
   Write-Output "Descargando frp $Version ($arch)..."
-  $zip = Join-Path $env:TEMP "$zipName.zip"
+  $tmp = Join-Path $env:TEMP ('frpc-eds-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  $zip = Join-Path $tmp "$zipName.zip"
   try {
     Invoke-WebRequest -Uri "https://github.com/fatedier/frp/releases/download/v$Version/$zipName.zip" -OutFile $zip -UseBasicParsing
-    Expand-Archive -LiteralPath $zip -DestinationPath $env:TEMP -Force
-    Copy-Item -LiteralPath (Join-Path $env:TEMP "$zipName\\frpc.exe") -Destination $Exe -Force
+    Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+    Copy-Item -LiteralPath (Join-Path $tmp "$zipName\\frpc.exe") -Destination $Exe -Force
   } catch {
+    Remove-Quiet $tmp
     throw ("No se pudo instalar frpc: " + $_.Exception.Message + " | Windows Defender bloquea a menudo los binarios de frp (falso positivo). Anade una exclusion de carpeta en Seguridad de Windows > Proteccion antivirus > Exclusiones y vuelve a intentarlo.")
-  } finally {
-    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
   }
+  Remove-Quiet $tmp
   Write-Output "frpc instalado en $Exe"
 } else {
   Write-Output "frpc ya presente en $Exe"
@@ -191,10 +202,12 @@ $Utf8 = New-Object System.Text.UTF8Encoding($false)
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 
 # 0) Restos de una instalacion anterior (evita dos frpc a la vez)
-& schtasks /End /TN $Task 2>$null | Out-Null
-Get-Process -Name frpc -ErrorAction SilentlyContinue |
-  Where-Object { $_.Path -eq $Exe -or $_.Path -like '*\\frpc-eds\\frpc.exe' } |
-  Stop-Process -Force -ErrorAction SilentlyContinue
+try { & schtasks /End /TN $Task 2>$null | Out-Null } catch { }
+try {
+  Get-Process -Name frpc -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -eq $Exe -or $_.Path -like '*\\frpc-eds\\frpc.exe' } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+} catch { }
 
 # 1) Binario
 ${downloadBlock()}
