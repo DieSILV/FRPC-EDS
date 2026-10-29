@@ -85,14 +85,25 @@ if (-not (Test-Path -LiteralPath $Exe)) {
 }`;
 }
 
-/** Bucle oculto: sincroniza frpc.toml con el panel y mantiene frpc vivo. */
+/** Bucle oculto: arranca frpc, lo mantiene vivo y sincroniza la config con el panel. */
 function runScript(syncUrl) {
   return `$ErrorActionPreference = 'SilentlyContinue'
 $Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Exe = Join-Path $Dir 'frpc.exe'
 $Cfg = Join-Path $Dir 'frpc.toml'
 $New = Join-Path $Dir 'frpc.toml.new'
+$Log = Join-Path $Dir 'frpc-eds.log'
 $Url = '${psSingleQuote(syncUrl)}'
+
+function Write-Log($m) {
+  try {
+    Add-Content -LiteralPath $Log -Value ((Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + '  ' + $m) -ErrorAction SilentlyContinue
+    $f = Get-Item -LiteralPath $Log -ErrorAction SilentlyContinue
+    if ($f -and $f.Length -gt 1048576) {
+      Move-Item -Force -LiteralPath $Log -Destination ($Log + '.1') -ErrorAction SilentlyContinue
+    }
+  } catch { }
+}
 
 function Get-Hash($p) {
   if (-not (Test-Path -LiteralPath $p)) { return '' }
@@ -100,31 +111,40 @@ function Get-Hash($p) {
 }
 
 function Start-Frpc {
-  # CreateNoWindow + sin shell: ningun tipo de ventana, ni un parpadeo.
-  $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = $Exe
-  $psi.Arguments = '-c "' + $Cfg + '"'
-  $psi.WorkingDirectory = $Dir
-  $psi.UseShellExecute = $false
-  $psi.CreateNoWindow = $true
-  return [System.Diagnostics.Process]::Start($psi)
+  try {
+    # -NoNewWindow: hereda la consola oculta del servicio, sin crear ninguna ventana.
+    # La salida va a frpc.out.log / frpc.err.log para poder diagnosticar fallos.
+    $p = Start-Process -FilePath $Exe -ArgumentList ('-c "' + $Cfg + '"') -WorkingDirectory $Dir -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Dir 'frpc.out.log') -RedirectStandardError (Join-Path $Dir 'frpc.err.log')
+    Write-Log ('frpc arrancado (PID ' + $p.Id + ')')
+    return $p
+  } catch {
+    Write-Log ('ERROR al arrancar frpc: ' + $_.Exception.Message)
+    return $null
+  }
 }
 
+Write-Log 'servicio iniciado'
 $proc = $null
 while ($true) {
+  # frpc primero: no depende de que el panel sea accesible.
+  if (-not $proc -or $proc.HasExited) {
+    if ($proc) { Write-Log ('frpc termino (exit ' + $proc.ExitCode + '), reiniciando') }
+    $proc = Start-Frpc
+  }
   if ($Url -ne '') {
     try {
       Invoke-WebRequest -Uri $Url -OutFile $New -UseBasicParsing -TimeoutSec 15
       if ((Get-Hash $New) -ne (Get-Hash $Cfg)) {
-        if ($proc -and -not $proc.HasExited) { $proc.Kill(); Start-Sleep -Seconds 2 }
+        if ($proc -and -not $proc.HasExited) { $proc.Kill() }
+        Start-Sleep -Seconds 2
         Move-Item -Force -LiteralPath $New -Destination $Cfg
-        $proc = $null
+        Write-Log 'configuracion actualizada desde el panel'
+        $proc = Start-Frpc
       } else {
-        Remove-Item -Force -LiteralPath $New
+        Remove-Item -Force -LiteralPath $New -ErrorAction SilentlyContinue
       }
     } catch { }
   }
-  if (-not $proc -or $proc.HasExited) { $proc = Start-Frpc }
   Start-Sleep -Seconds 30
 }`;
 }
@@ -152,7 +172,11 @@ function helperScripts() {
 title FRPC-EDS - estado
 ${ps} "Get-ScheduledTask -TaskName '${WIN_TASK_NAME}' | Format-List TaskName,State; Get-ScheduledTaskInfo -TaskName '${WIN_TASK_NAME}' | Format-List LastRunTime,LastTaskResult,NextRunTime; Get-Process frpc -ErrorAction SilentlyContinue | Format-Table Id,ProcessName,StartTime -AutoSize"
 echo.
-echo (frpc debe aparecer arriba: si no, revisa el Visor de eventos)
+echo --- frpc-eds.log (ultimas 15 lineas) ---
+${ps} "Get-Content -LiteralPath 'C:\\ProgramData\\FRPC-EDS\\frpc-eds.log' -Tail 15 -ErrorAction SilentlyContinue"
+echo --- frpc.err.log ---
+${ps} "Get-Content -LiteralPath 'C:\\ProgramData\\FRPC-EDS\\frpc.err.log' -Tail 15 -ErrorAction SilentlyContinue"
+echo.
 pause
 `,
     },
@@ -245,21 +269,38 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
 Register-ScheduledTask -TaskName $Task -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Write-Output "Servicio '$Task' registrado (arranca con Windows, sin ventanas)"
 
-# 6) Arrancar y comprobar
+# 6) Arrancar y comprobar (con paciencia: el primer arranque puede tardar)
+function Wait-Frpc([int]$segundos) {
+  $limit = (Get-Date).AddSeconds($segundos)
+  while ((Get-Date) -lt $limit) {
+    $p = Get-Process -Name frpc -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($p) { return $p }
+    Start-Sleep -Milliseconds 750
+  }
+  return $null
+}
+
 Start-ScheduledTask -TaskName $Task
-$deadline = (Get-Date).AddSeconds(20)
-$proc = $null
-while (-not $proc -and (Get-Date) -lt $deadline) {
-  Start-Sleep -Milliseconds 500
-  $proc = Get-Process -Name frpc -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -eq $Exe } |
-    Select-Object -First 1
-}
+$proc = Wait-Frpc 45
 if (-not $proc) {
-  throw "El servicio '$Task' se registro pero frpc no ha arrancado. Ejecuta estado.cmd o revisa el Visor de eventos."
+  # Segundo intento: la primera ejecucion puede quedarse esperando red.
+  Stop-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 2
+  Start-ScheduledTask -TaskName $Task
+  $proc = Wait-Frpc 30
 }
-Write-Output "OK - frpc en marcha (PID $($proc.Id)) bajo el servicio '$Task'"
-Write-Output "Estado: $Dir\\estado.cmd"`;
+
+if ($proc) {
+  Write-Output "OK - frpc en marcha (PID $($proc.Id)) bajo el servicio '$Task'"
+  Write-Output "Estado: $Dir\\estado.cmd"
+} else {
+  $state = (Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue).State
+  $info = Get-ScheduledTaskInfo -TaskName $Task -ErrorAction SilentlyContinue
+  Write-Output "AVISO: servicio '$Task' registrado (estado: $state) pero frpc no aparece."
+  if ($info) { Write-Output ('Ultima ejecucion: ' + $info.LastRunTime + ' | resultado: ' + $info.LastTaskResult) }
+  Write-Output ('Revisa ' + $Dir + '\\frpc-eds.log y frpc.err.log, o ejecuta estado.cmd.')
+  exit 2
+}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -360,6 +401,7 @@ Section "Instalar"
   Pop $Output
 
   \${If} $ExitCode == "0"
+  \${OrIf} $ExitCode == "2"
     WriteUninstaller "$INSTDIR\\uninstall.exe"
     WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\FRPC-EDS" "DisplayName" "${appName}"
     WriteRegStr HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\FRPC-EDS" "DisplayVersion" "${version}"
@@ -369,7 +411,11 @@ Section "Instalar"
     WriteRegDWORD HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\FRPC-EDS" "NoModify" 1
     WriteRegDWORD HKLM "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\FRPC-EDS" "NoRepair" 1
 
+    \${If} $ExitCode == "0"
     MessageBox MB_ICONINFORMATION|MB_OK "FRPC-EDS instalado.$\\r$\\n$\\r$\\nfrpc ya esta corriendo en segundo plano (servicio 'FRPC-EDS', usuario SYSTEM). No abre ninguna ventana.$\\r$\\n$\\r$\\nEstado: $INSTDIR\\estado.cmd$\\r$\\nPanel: sigue creando tuneles, el cliente se sincroniza solo."
+    \${Else}
+      MessageBox MB_ICONEXCLAMATION|MB_OK "FRPC-EDS instalado, pero frpc todavia no responde (el primer arranque puede tardar).$\\r$\\n$\\r$\\nDetalle:$\\r$\\n$Output"
+    \${EndIf}
   \${Else}
     SetErrorLevel 1
     MessageBox MB_ICONSTOP|MB_OK "No se pudo instalar FRPC-EDS.$\\r$\\n$\\r$\\n$Output"
