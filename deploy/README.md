@@ -87,6 +87,8 @@ Si usas *Cloud Firewalls* de DigitalOcean, aplica la misma regla.
 # Node.js 22 LTS
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
+# NSIS: genera los instaladores .exe de Windows desde el panel
+sudo apt-get install -y --no-install-recommends nsis
 
 # Usuario sin privilegios
 sudo useradd --system --create-home --shell /usr/sbin/nologin frp
@@ -226,8 +228,14 @@ En la pestaña **Servidores** → *Agregar servidor*, y luego descarga:
 
 - **Linux:** `install.sh` → `sudo bash install-frpc.sh`
   Instala `frpc` en `/opt/frpc-eds` y crea el servicio `frpc-eds`.
-- **Windows:** `install.ps1` → `powershell -ExecutionPolicy Bypass -File install-frpc.ps1`
+- **Windows:** `install.exe` → doble clic (solo UAC). Instala en
+  `C:\ProgramData\FRPC-EDS` y registra la tarea programada `FRPC-EDS` como
+  `SYSTEM`: corre en segundo plano, sin ventanas.
+  Alternativa: `install.ps1` → `powershell -ExecutionPolicy Bypass -File install-frpc.ps1`
 - **Manual:** `frpc.toml` para copiarlo donde ya tengas frpc.
+
+> `install.exe` se compila al vuelo con NSIS. Si el droplet no lo tiene, el
+> enlace responde 503: `sudo apt-get install -y --no-install-recommends nsis`.
 
 Estado en el cliente:
 

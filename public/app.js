@@ -1033,8 +1033,13 @@ function openNodeConfigModal(node) {
               </div></div>`
             : `<div class="grid-2">
                 <a class="btn ghost" href="${base}/frpc.toml">frpc.toml</a>
+                ${
+                  state.data?.capabilities?.windowsExe === false
+                    ? `<a class="btn ghost" href="${base}/install.ps1">Instalador Windows (.ps1)</a>`
+                    : `<a class="btn primary" href="${base}/install.exe">Instalador Windows (.exe)</a>
+                       <a class="btn ghost" href="${base}/install.ps1">Script .ps1 (alternativa)</a>`
+                }
                 <a class="btn ghost" href="${base}/install.sh">Instalador Linux</a>
-                <a class="btn ghost" href="${base}/install.ps1">Instalador Windows</a>
               </div>`
         }
       </div>
@@ -1042,8 +1047,10 @@ function openNodeConfigModal(node) {
       <div class="field" ${node.mode === "local" ? 'style="display:none"' : ""}>
         <label>2. Ejecútala en el servidor</label>
         <div class="hint">
-          Linux: <code class="mono">sudo bash install-frpc.sh</code><br />
-          Windows: <code class="mono">powershell -ExecutionPolicy Bypass -File install-frpc.ps1</code>
+          Windows: doble clic en <code class="mono">install-frpc-${esc(node.id)}.exe</code> (solo UAC;
+          frpc queda <strong>en segundo plano</strong>, sin ventanas)<br />
+          Windows (alternativa): <code class="mono">powershell -ExecutionPolicy Bypass -File install-frpc.ps1</code><br />
+          Linux: <code class="mono">sudo bash install-frpc.sh</code>
         </div>
       </div>
     `,

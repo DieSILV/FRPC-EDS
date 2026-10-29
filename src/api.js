@@ -8,8 +8,13 @@ import { agent } from "./agent.js";
 import { getStatus } from "./frps.js";
 import { buildFrpcToml, buildFrpsToml } from "./toml.js";
 import { handlePluginRequest } from "./frpauth.js";
-import { RUNTIME_DIR } from "./config.js";
+import { RUNTIME_DIR, DATA_DIR } from "./config.js";
 import { writeFrpsConfig, writeAllNodeConfigs, writeNodeConfig } from "./runtime.js";
+import {
+  buildPs1Installer,
+  compileWinInstaller,
+  exeInstallerAvailable,
+} from "./wininstaller.js";
 import {
   checkCredentials,
   createSession,
@@ -32,7 +37,8 @@ const PUBLIC_PATHS = new Set([
 /** Rutas públicas con parómetros (autenticadas por token del propio nodo). */
 const PUBLIC_PREFIXES = ["/api/client/"];
 
-const FRP_VERSION = "0.71.1";
+/** Cache de instaladores .exe compilados (por nodo + hash de la config). */
+const INSTALLER_CACHE = path.join(DATA_DIR, "cache", "installers");
 
 const isPublicPath = (p) =>
   PUBLIC_PATHS.has(p) || PUBLIC_PREFIXES.some((prefix) => p.startsWith(prefix));
@@ -81,6 +87,18 @@ function download(ctx, filename, content) {
     "cache-control": "no-store",
   });
   ctx.res.end(content);
+}
+
+function downloadFile(ctx, filename, filePath) {
+  const { size } = fs.statSync(filePath);
+  ctx.res.writeHead(200, {
+    "content-type": "application/vnd.microsoft.portable-executable",
+    "content-length": size,
+    "content-disposition": `attachment; filename="${filename}"`,
+    "cache-control": "no-store",
+  });
+  fs.createReadStream(filePath).pipe(ctx.res);
+  return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -136,6 +154,7 @@ async function buildOverview(session) {
   return {
     user: session?.u || null,
     settings: db.settings,
+    capabilities: { windowsExe: exeInstallerAvailable() },
     nodes,
     tunnels,
     agent: agent.snapshot(),
@@ -167,112 +186,6 @@ async function afterTunnelChange(nodeId) {
   if (local && local.id === nodeId && agent.running) {
     await agent.applyConfig();
   }
-}
-
-function buildInstallScript(node, toml, syncUrl = "") {
-  // Watchdog + auto-sincronizacion de la config con el panel.
-  const runScript = `$ErrorActionPreference = 'SilentlyContinue'
-$Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Exe = Join-Path $Dir 'frpc.exe'
-$Cfg = Join-Path $Dir 'frpc.toml'
-$New = Join-Path $Dir 'frpc.toml.new'
-$Url = '${syncUrl}'
-
-function Get-Hash($p) {
-  if (-not (Test-Path -LiteralPath $p)) { return '' }
-  return (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash
-}
-
-$proc = $null
-while ($true) {
-  if ($Url -ne '') {
-    try {
-      Invoke-WebRequest -Uri $Url -OutFile $New -UseBasicParsing -TimeoutSec 15
-      if ((Get-Hash $New) -ne (Get-Hash $Cfg)) {
-        if ($proc -and -not $proc.HasExited) { $proc.Kill(); Start-Sleep -Seconds 2 }
-        Move-Item -Force -LiteralPath $New -Destination $Cfg
-        $proc = $null
-      } else {
-        Remove-Item -Force -LiteralPath $New
-      }
-    } catch { }
-  }
-  if (-not $proc -or $proc.HasExited) {
-    $proc = Start-Process -FilePath $Exe -ArgumentList '-c', $Cfg -PassThru -WindowStyle Hidden
-  }
-  Start-Sleep -Seconds 30
-}
-`;
-
-  return `# ------------------------------------------------------------------
-# FRPC-EDS — instalación del cliente para "${node.name}"
-# Generado el ${new Date().toISOString()}
-#
-# Uso (PowerShell):
-#   powershell -ExecutionPolicy Bypass -File install-frpc.ps1
-# ------------------------------------------------------------------
-$ErrorActionPreference = 'Stop'
-$Version = '${FRP_VERSION}'
-$Dir = Join-Path $env:USERPROFILE 'frpc-eds'
-New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
-$name = "frp_\${Version}_windows_\${arch}"
-
-if (-not (Test-Path (Join-Path $Dir 'frpc.exe'))) {
-  Write-Host "Descargando frp $Version ($arch)..."
-  $zip = Join-Path $env:TEMP "$name.zip"
-  Invoke-WebRequest -Uri "https://github.com/fatedier/frp/releases/download/v\${Version}/\${name}.zip" -OutFile $zip
-  try {
-    Expand-Archive -Path $zip -DestinationPath $env:TEMP -Force
-  } catch {
-    Write-Host ""
-    Write-Host "No se pudo extraer el zip. Windows Defender bloquea a menudo los" -ForegroundColor Yellow
-    Write-Host "binarios de frp (falso positivo generico). Anade una exclusion de" -ForegroundColor Yellow
-    Write-Host "carpeta en Seguridad de Windows > Proteccion antivirus > Exclusiones" -ForegroundColor Yellow
-    Write-Host "y vuelve a ejecutar este script." -ForegroundColor Yellow
-    throw
-  }
-  Copy-Item (Join-Path $env:TEMP "$name\\frpc.exe") $Dir -Force
-  Write-Host "frpc instalado en $Dir"
-}
-
-$config = @'
-${toml.trimEnd()}
-'@
-# Sin BOM: algunos parsers TOML fallan con el BOM de PowerShell 5.1
-$configPath = Join-Path $Dir 'frpc.toml'
-[System.IO.File]::WriteAllText($configPath, $config, (New-Object System.Text.UTF8Encoding($false)))
-Write-Host "Configuración escrita en $configPath"
-
-# --- Servicio (tarea programada) + auto-sincronización con el panel ---
-$runPath = Join-Path $Dir 'run.ps1'
-$runBody = @'
-${runScript.trimEnd()}
-'@
-[System.IO.File]::WriteAllText($runPath, $runBody, (New-Object System.Text.UTF8Encoding($false)))
-
-$registered = $false
-try {
-  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $runPath + '"')
-  $trigger = New-ScheduledTaskTrigger -AtStartup
-  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-  $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero)
-  Register-ScheduledTask -TaskName 'FRPC-EDS' -Action $action -Trigger $trigger -Principal $principal -Settings $taskSettings -Force | Out-Null
-  Start-ScheduledTask -TaskName 'FRPC-EDS'
-  $registered = $true
-  Write-Host "Servicio instalado: tarea programada 'FRPC-EDS' (arranca con Windows)."
-  Write-Host "  Estado:  Get-ScheduledTask -TaskName FRPC-EDS | Get-ScheduledTaskInfo"
-  Write-Host "  Detener: Stop-ScheduledTask -TaskName FRPC-EDS"
-} catch {
-  Write-Host "No se pudo registrar la tarea programada (hace falta ejecutar como Administrador)." -ForegroundColor Yellow
-}
-
-if (-not $registered) {
-  Write-Host "Iniciando frpc en primer plano (Ctrl+C para detener)..."
-  & (Join-Path $Dir 'frpc.exe') -c $configPath
-}
-`;
 }
 
 function buildLinuxInstallScript(node, toml, syncUrl = "") {
@@ -484,7 +397,8 @@ export function buildApiRouter() {
     return download(ctx, `frpc-${node.id}.toml`, buildFrpcToml(db.settings, node, tunnels));
   });
 
-  r.get("/api/nodes/:id/install.ps1", (ctx) => {
+  /** Nodo remoto + su config ya generada (los instaladores no aplican al local). */
+  const installerTarget = (ctx) => {
     const db = store.read();
     const node = db.nodes.find((n) => n.id === ctx.params.id);
     if (!node) throw httpError(404, "Servidor no encontrado");
@@ -495,12 +409,23 @@ export function buildApiRouter() {
       );
     }
     const tunnels = db.tunnels.filter((t) => t.nodeId === node.id);
-    const toml = buildFrpcToml(db.settings, node, tunnels);
-    return download(
-      ctx,
-      "install-frpc.ps1",
-      buildInstallScript(node, toml, clientConfigUrl(db.settings, node)),
-    );
+    return {
+      node,
+      toml: buildFrpcToml(db.settings, node, tunnels),
+      syncUrl: clientConfigUrl(db.settings, node),
+    };
+  };
+
+  r.get("/api/nodes/:id/install.ps1", (ctx) => {
+    const { node, toml, syncUrl } = installerTarget(ctx);
+    return download(ctx, "install-frpc.ps1", buildPs1Installer(node, toml, syncUrl));
+  });
+
+  /** Instalador .exe (silencioso, sin ventanas) generado al vuelo con NSIS. */
+  r.get("/api/nodes/:id/install.exe", (ctx) => {
+    const { node, toml, syncUrl } = installerTarget(ctx);
+    const file = compileWinInstaller({ node, toml, syncUrl, cacheDir: INSTALLER_CACHE });
+    return downloadFile(ctx, `install-frpc-${node.id}.exe`, file);
   });
 
   r.get("/api/nodes/:id/install.sh", (ctx) => {

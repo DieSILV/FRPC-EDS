@@ -40,8 +40,9 @@ locales bajo `https://<subdominio>.eds.dev`.
 - **Panel web**: CRUD de servidores y túneles, estado en vivo (online/offline,
   conexiones, tráfico del día) leyendo la API de administración de frps.
 - **Genera la configuración** de frps y de cada cliente (`frpc.toml`).
-- **Instaladores listos**: `install.sh` (Linux + systemd) y `install.ps1`
-  (Windows) con la config embebida.
+- **Instaladores listos**: `install.sh` (Linux + systemd), **`install.exe`**
+  (Windows, doble clic, silencioso y sin ventanas) e `install.ps1`
+  (alternativa) con la config embebida.
 - **Token propio por servidor** (sin usuario/contraseña), validado por frps y
   revocable individualmente.
 - **Agente local gestionado**: arranca/para/reinicia `frpc` como proceso hijo,
@@ -57,6 +58,15 @@ locales bajo `https://<subdominio>.eds.dev`.
 | frp (frps/frpc) | 0.71.x (el instalador baja la 0.71.1)           |
 | Dominio         | con registro DNS **wildcard** `*` → IP servidor |
 | Puerto 80/443   | libres en el servidor (si usas proxy TLS)       |
+| NSIS            | opcional, solo en el servidor del panel         |
+
+NSIS (`makensis`) es lo único que necesita el panel para servir
+`install.exe`; si no está instalado, ese enlace responde 503 y el `.ps1`
+sigue funcionando:
+
+```bash
+sudo apt-get install -y --no-install-recommends nsis   # Debian/Ubuntu
+```
 
 ## Inicio rápido (local)
 
@@ -127,11 +137,13 @@ En cada conexión frps llama al plugin del panel (`[[httpPlugins]]`, op `Login`)
 1. **Servidores** → *Agregar servidor* (uno por máquina que publicará algo).
    También puedes saltarte este paso: en *Nuevo túnel* elige
    **«+ Servidor nuevo…»** y escribe el nombre; el servidor se crea al vuelo.
-2. Descarga `install.sh` / `install.ps1` y ejecútalo **en esa máquina**:
-   instala `frpc` y lo deja como servicio (`frpc-eds`).
-   El instalador añade además una **auto-sincronización**: cada 60 s el cliente
-   descarga su `frpc.toml` desde el panel (con su propio token) y reinicia frpc
-   solo si cambió. **No hay que volver a descargar nada** al crear túneles.
+2. Descarga el instalador y ejecútalo **en esa máquina**: instala `frpc` y lo
+   deja como servicio (`frpc-eds` en Linux, tarea programada `FRPC-EDS` en
+   Windows). En Windows basta con **doble clic en el `.exe`**.
+   El instalador añade además una **auto-sincronización**: el cliente descarga
+   su `frpc.toml` desde el panel (con su propio token) cada 30 s (Linux: 60 s)
+   y reinicia frpc solo si cambió. **No hay que volver a descargar nada** al
+   crear túneles.
 3. **Túneles** → *Nuevo túnel*: servidor, tipo (`http`/`https`/`tcp`/`udp`),
    subdominio, destino local (`127.0.0.1:8000`).
 4. El túnel aparece como *en línea* cuando el cliente conecta y frps lo registra.
@@ -143,6 +155,36 @@ servidor. Los subdominios `central`, `www`, `panel`, `admin`, `api`, `ns1`-`ns3`
 Para el nodo **local** (donde corre el panel), pestaña **Agente local** →
 *Iniciar agente*: el panel lanza `frpc` y aplica los cambios de túneles en
 caliente.
+
+## Instalador Windows (`install.exe`)
+
+*Servidores* → *Token y config* → **Instalador Windows (.exe)**. El panel genera
+un `.exe` distinto por servidor (NSIS) con su `frpc.toml` y su token dentro.
+
+- **Silencioso**: al abrir solo aparece el aviso de UAC y un mensaje final. No
+  hay asistentes ni ventanas negras.
+- **Corre en segundo plano**: se registra la tarea programada `FRPC-EDS`
+  (usuario `SYSTEM`, al arrancar Windows, reinicio automático si falla). Todo
+  ocurre en la sesión 0, así que **no se abre ninguna ventana**, ni al arrancar
+  el equipo ni al reiniciar `frpc`.
+- `frpc.exe` se lanza con `CreateNoWindow` (sin consola, ni el parpadeo de
+  `cmd.exe`).
+- Se instala en `C:\ProgramData\FRPC-EDS` con permisos solo para `SYSTEM` y
+  *Administradores* (ahí vive el token).
+- Deja tres atajos en esa carpeta: `estado.cmd`, `iniciar.cmd`, `detener.cmd`,
+  más `uninstall.exe` (también aparece en *Aplicaciones instaladas*).
+
+Verificar / controlar desde PowerShell (o con `estado.cmd`):
+
+```powershell
+Get-ScheduledTask FRPC-EDS | Select-Object TaskName, State
+Get-Process frpc | Select-Object Id, Path, StartTime
+Stop-ScheduledTask   FRPC-EDS   # detener
+Start-ScheduledTask  FRPC-EDS   # arrancar
+```
+
+> El `.exe` no está firmado: SmartScreen puede pedir *Más información →
+> Ejecutar de todas formas*. Es lo normal en instaladores generados al vuelo.
 
 ## Pestañas del panel
 
@@ -159,6 +201,7 @@ caliente.
 src/
   index.js     servidor HTTP, estático, sesión, arranque
   api.js       rutas /api/*, generadores de instaladores
+  wininstaller.js  instalador .exe (NSIS) + scripts PowerShell del cliente
   store.js     persistencia (data/db.json, escritura atómica) + validación
   toml.js      generación de frps.toml / frpc.toml
   runtime.js   escritura de configs en data/runtime/
@@ -185,7 +228,9 @@ Todas las rutas requieren sesión salvo `/api/login`, `/api/logout`,
 | GET/POST    | `/api/nodes`                                      | Listar / crear servidor      |
 | PUT/DELETE  | `/api/nodes/:id`                                  | Editar / eliminar            |
 | GET         | `/api/nodes/:id/frpc.toml`                        | Descargar config             |
-| GET         | `/api/nodes/:id/install.sh` \| `install.ps1`      | Instaladores                 |
+| GET         | `/api/nodes/:id/install.exe`                      | Instalador Windows (.exe)    |
+| GET         | `/api/nodes/:id/install.ps1`                      | Instalador Windows (.ps1)    |
+| GET         | `/api/nodes/:id/install.sh`                       | Instalador Linux             |
 | POST        | `/api/nodes/:id/token`                            | Regenerar token del servidor |
 | POST        | `/api/frp/plugin`                                 | Plugin de auth para frps     |
 | GET/POST    | `/api/tunnels`                                    | Listar / crear túnel         |
@@ -228,6 +273,10 @@ binarios Go (`Trojan:Win32/Kepavll`, `Wacatac`). El zip queda bloqueado y
 `Expand-Archive` falla. Soluciones: añadir una exclusión de carpeta en
 *Seguridad de Windows → Protección antivirus → Exclusiones*, o instalar frp en
 el servidor Linux.
+
+**SmartScreen bloquea `install.exe`.** El `.exe` se genera al vuelo y no está
+firmado: *Más información → Ejecutar de todas formas*. Si prefieres evitarlo, usa
+`install.ps1`.
 
 **Los subdominios no resuelven.** Falta el registro DNS wildcard `*`, o el
 `subDomainHost` no coincide con el dominio configurado.
