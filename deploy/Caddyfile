@@ -149,6 +149,25 @@ https://:5173 {
 	}
 }
 
+https://:9000 {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	forward_auth 127.0.0.1:7800 {
+		uri /api/guard
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host p9000-{http.request.host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Port 9000
+		flush_interval -1
+	}
+}
+
 # HTTP → HTTPS
 http:// {
 	redir https://{host}{uri} permanent

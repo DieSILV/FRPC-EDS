@@ -9,7 +9,7 @@ export const TUNNEL_TYPES = ["http", "https", "tcp", "udp"];
  * Puertos públicos extra que Caddy sabe terminar con TLS (ver /etc/caddy/Caddyfile).
  * Cada uno se publica como https://<subdominio>.<dominio>:<puerto>
  */
-export const SUPPORTED_PUBLIC_PORTS = [3000, 3001, 4173, 5173];
+export const SUPPORTED_PUBLIC_PORTS = [3000, 3001, 4173, 5173, 9000];
 
 /* ------------------------------------------------------------------ */
 /* Listas de IPs (listas blanca/negra)                                 */

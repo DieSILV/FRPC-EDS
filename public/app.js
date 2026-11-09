@@ -698,7 +698,7 @@ function openTunnelModal(tunnel) {
       <div class="field" data-when="http">
         <label>Puertos públicos adicionales (opcional)</label>
         <input type="text" name="publicPorts" class="mono" value="${esc((current.publicPorts || []).join(", "))}" placeholder="3001, 4173" />
-        <span class="hint">Se publican como https://sub.dominio:PUERTO con TLS. Habilitados: 3000, 3001, 4173, 5173.</span>
+        <span class="hint">Se publican como https://sub.dominio:PUERTO con TLS. Habilitados: 3000, 3001, 4173, 5173, 9000.</span>
       </div>
 
       <div class="grid-2">
