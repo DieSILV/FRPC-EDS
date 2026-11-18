@@ -51,7 +51,11 @@ export function buildFrpsToml(s) {
 export function buildFrpcToml(s, node, tunnels) {
   const L = [];
   L.push(`# Cliente FRP - servidor "${node.name}" (${node.id})`);
-  L.push(`# Generado por FRPC-EDS el ${new Date().toISOString()}`);
+  // OJO: nada de fechas ni datos variables aqui. Los clientes comparan el
+  // archivo descargado con el que tienen y reinician frpc si cambia; con un
+  // timestamp se reiniciaban cada minuto (minúsculo corte visible como el 404
+  // de frp al recargar).
+  L.push("# Generado por FRPC-EDS: no editar a mano.");
   L.push("");
   L.push(`serverAddr = ${q(s.serverAddr)}`);
   L.push(`serverPort = ${s.bindPort}`);
@@ -64,10 +68,11 @@ export function buildFrpcToml(s, node, tunnels) {
   L.push(`metadatas.node = ${q(node.slug)}`);
   L.push("");
   L.push("transport.tls.enable = true");
-  L.push("# Reconexion: detecta caidas de red en ~30 s y NO termina si el servidor");
-  L.push("# no responde al arrancar (reintenta indefinidamente).");
+  L.push("# Reconexion: latido cada 10 s y margen amplio para enlaces malos.");
+  L.push("# Con margenes cortos, cualquier bajon de la linea corta la sesion y");
+  L.push("# frps devuelve su 404 mientras el cliente vuelve a conectar.");
   L.push("transport.heartbeatInterval = 10");
-  L.push("transport.heartbeatTimeout = 30");
+  L.push("transport.heartbeatTimeout = 60");
   L.push("loginFailExit = false");
   L.push('log.level = "info"');
   L.push("log.maxDays = 3");

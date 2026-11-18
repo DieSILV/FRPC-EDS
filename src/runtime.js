@@ -22,7 +22,15 @@ export function writeNodeConfig(nodeId) {
   const dir = path.join(RUNTIME_DIR, nodeId);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, "frpc.toml");
-  fs.writeFileSync(file, toml, "utf8");
+  // Solo se reescribe si cambió: los clientes comparan por contenido y un
+  // archivo idéntico no debe provocar reinicios de frpc.
+  let previous = null;
+  try {
+    previous = fs.readFileSync(file, "utf8");
+  } catch {
+    /* primera vez */
+  }
+  if (previous !== toml) fs.writeFileSync(file, toml, "utf8");
   return { file, toml, node };
 }
 
