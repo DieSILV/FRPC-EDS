@@ -1,15 +1,36 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { DB_FILE } from "./config.js";
+import { DB_FILE, env } from "./config.js";
 import { httpError } from "./errors.js";
 
 export const TUNNEL_TYPES = ["http", "https", "tcp", "udp"];
 
 /**
- * Puertos públicos extra que Caddy sabe terminar con TLS (ver /etc/caddy/Caddyfile).
- * Cada uno se publica como https://<subdominio>.<dominio>:<puerto>
+ * Puertos con bloque fijo en el Caddyfile de producción (siempre disponibles).
+ * El resto de puertos se publican igual: el panel genera un bloque de Caddy
+ * por cada puerto usado en los túneles y recarga Caddy (ver src/caddy.js).
  */
-export const SUPPORTED_PUBLIC_PORTS = [3000, 3001, 4173, 5173, 9000];
+export const DEFAULT_PUBLIC_PORTS = [3000, 3001, 4173, 5173, 9000];
+
+/**
+ * Puertos que nunca se pueden publicar porque los usa la infraestructura
+ * (SSH, HTTP/HTTPS de Caddy, API admin de Caddy, panel, control de frps…).
+ */
+function reservedPublicPorts(settings = {}) {
+  const adminApi = settings.adminApi && typeof settings.adminApi === "object" ? settings.adminApi : {};
+  const reserved = new Set([80, 443, 2019, Number(env.port) || 7800]);
+  for (const candidate of [
+    settings.bindPort,
+    settings.vhostHTTPPort,
+    settings.vhostHTTPSPort,
+    settings.frpcAdminPort,
+    adminApi.port,
+  ]) {
+    const port = Number(candidate);
+    if (Number.isInteger(port) && port > 0) reserved.add(port);
+  }
+  return reserved;
+}
 
 /* ------------------------------------------------------------------ */
 /* Listas de IPs (listas blanca/negra)                                 */
@@ -226,7 +247,9 @@ function ensure(db) {
     t.localPort = num(t.localPort, 80, 1);
     t.remotePort = t.remotePort == null ? null : num(t.remotePort, null, 1);
     t.publicPorts = Array.isArray(t.publicPorts)
-      ? t.publicPorts.map((p) => Number(p)).filter((p) => SUPPORTED_PUBLIC_PORTS.includes(p))
+      ? [...new Set(t.publicPorts.map((p) => Number(p)))]
+          .filter((p) => Number.isInteger(p) && p >= 1 && p <= 65535)
+          .sort((a, b) => a - b)
       : [];
     t.subdomain = str(t.subdomain, "").trim().toLowerCase();
     t.customDomains = Array.isArray(t.customDomains) ? t.customDomains : [];
@@ -362,23 +385,32 @@ function parseDomainList(input) {
   return [];
 }
 
-/** Lista de puertos públicos adicionales (validada contra los soportados). */
-function parsePublicPorts(input) {
+/**
+ * Lista de puertos públicos adicionales. Se acepta cualquier puerto libre
+ * (1024-65535); solo se rechazan los que usa la propia infraestructura.
+ */
+function parsePublicPorts(input, settings = {}) {
   const list = Array.isArray(input) ? input : String(input ?? "").split(/[\s,;]+/);
+  const reserved = reservedPublicPorts(settings);
   const out = [];
   for (const raw of list) {
     const value = String(raw).trim();
     if (!value) continue;
+    if (!/^\d{1,5}$/.test(value)) throw httpError(400, `Puerto no válido: ${value}`);
     const n = Number(value);
-    if (!SUPPORTED_PUBLIC_PORTS.includes(n)) {
+    if (n < 1024 || n > 65535) {
+      throw httpError(400, `El puerto ${value} debe estar entre 1024 y 65535`);
+    }
+    if (reserved.has(n)) {
       throw httpError(
         400,
-        `El puerto ${value} no está habilitado. Disponibles: ${SUPPORTED_PUBLIC_PORTS.join(", ")}`,
+        `El puerto ${n} está reservado para la infraestructura del servidor (panel, frps o Caddy). Elige otro.`,
       );
     }
     if (!out.includes(n)) out.push(n);
   }
-  return out;
+  if (out.length > 20) throw httpError(400, "Máximo 20 puertos públicos adicionales por túnel");
+  return out.sort((a, b) => a - b);
 }
 
 function normalizeTunnel(db, input, existing) {
@@ -445,7 +477,7 @@ function normalizeTunnel(db, input, existing) {
     );
     if (clash) throw httpError(409, `El dominio ya está usado por el túnel "${clash.name}"`);
 
-    publicPorts = parsePublicPorts(input.publicPorts ?? existing?.publicPorts ?? []);
+    publicPorts = parsePublicPorts(input.publicPorts ?? existing?.publicPorts ?? [], db.settings);
     ipAllow = parseIpList(input.ipAllow ?? existing?.ipAllow ?? []);
     ipDeny = parseIpList(input.ipDeny ?? existing?.ipDeny ?? []);
     blockedPaths = parsePathList(input.blockedPaths ?? existing?.blockedPaths ?? []);

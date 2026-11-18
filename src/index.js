@@ -6,6 +6,7 @@ import { buildApiRouter } from "./api.js";
 import { getSession } from "./auth.js";
 import { agent } from "./agent.js";
 import { writeFrpsConfig, writeAllNodeConfigs } from "./runtime.js";
+import { syncCaddyPorts } from "./caddy.js";
 import * as store from "./store.js";
 
 const api = buildApiRouter();
@@ -153,6 +154,11 @@ server.listen(env.port, env.host, () => {
   } catch (err) {
     console.warn(`[panel] No se pudieron generar las configuraciones: ${err.message}`);
   }
+
+  // Deja Caddy y el firewall alineados con los puertos adicionales guardados.
+  syncCaddyPorts().catch((err) =>
+    console.warn(`[caddy] No se pudieron publicar los puertos adicionales: ${err.message}`),
+  );
 
   const binary = frpcBinary();
   const settings = store.getSettings();

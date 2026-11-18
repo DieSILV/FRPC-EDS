@@ -14,7 +14,10 @@ EnvironmentFile=/opt/frpc-eds/.env
 ExecStart=/usr/bin/node /opt/frpc-eds/src/index.js
 Restart=always
 RestartSec=3
-NoNewPrivileges=true
+# OJO: NoNewPrivileges bloquea sudo. El panel lo necesita para abrir/cerrar
+# en UFW los puertos públicos adicionales mediante el helper root
+# /usr/local/sbin/frpc-eds-ports (única orden permitida en sudoers).
+# NoNewPrivileges=true
 PrivateTmp=true
 
 [Install]

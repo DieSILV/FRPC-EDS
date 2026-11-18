@@ -71,8 +71,16 @@ https:// {
 # Puertos públicos adicionales por túnel: https://<host>:<puerto>
 # El Host se reescribe a "p<puerto>-<host>" para que frps lo enrute al
 # proxy correcto; hostHeaderRewrite devuelve al servicio el Host real.
-# Deben coincidir con SUPPORTED_PUBLIC_PORTS (src/store.js).
+#
+# El panel NO tiene una lista fija: genera un bloque por cada puerto que
+# pidas en el túnel y lo escribe en el archivo importado de abajo. Ejecuta
+# una sola vez (como root)  scripts/setup-caddy-ports.sh  para crear ese
+# archivo y dar permiso al panel sobre la carpeta y sobre UFW.
 # ------------------------------------------------------------------
+import /etc/caddy/frpc-eds.d/ports.caddy
+
+# Los puertos de abajo son los "base": existen siempre y no hace falta
+# generarlos. Puedes borrarlos si prefieres que el panel gestione todo.
 https://:3000 {
 	tls {
 		on_demand

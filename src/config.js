@@ -23,6 +23,25 @@ export const PUBLIC_DIR = path.join(ROOT, "public");
 export const BIN_DIR = path.join(ROOT, "bin", "frp");
 export const DB_FILE = path.join(DATA_DIR, "db.json");
 
+/**
+ * Caddy: el panel genera un fragmento con un bloque por cada puerto público
+ * adicional y lo aplica recargando Caddy por su API de administración.
+ * `scripts/setup-caddy-ports.sh` deja todo preparado (carpeta + import).
+ */
+export const CADDY_CONFIG = process.env.CADDY_CONFIG || "/etc/caddy/Caddyfile";
+export const CADDY_ADMIN = process.env.CADDY_ADMIN || "http://127.0.0.1:2019";
+export const CADDY_PORTS_DIR =
+  process.env.CADDY_PORTS_DIR || path.join(path.dirname(CADDY_CONFIG), "frpc-eds.d");
+export const CADDY_PORTS_FILE = path.join(CADDY_PORTS_DIR, "ports.caddy");
+
+/**
+ * Firewall: el panel abre/cierra en UFW los puertos públicos adicionales
+ * llamando (vía sudo, sin contraseña) a este helper root, que valida cada
+ * puerto antes de tocar nada. Lo instala `scripts/setup-caddy-ports.sh`.
+ */
+export const FIREWALL_HELPER =
+  process.env.FIREWALL_HELPER || "/usr/local/sbin/frpc-eds-ports";
+
 fs.mkdirSync(RUNTIME_DIR, { recursive: true });
 
 /** Ruta al binario de frpc. */

@@ -81,6 +81,15 @@ Deben quedar en localhost.
 
 Si usas *Cloud Firewalls* de DigitalOcean, aplica la misma regla.
 
+> **Puertos públicos adicionales** (`https://sub.dominio:<puerto>`): no hace
+> falta abrirlos a mano. El panel los abre y los cierra en UFW mediante el
+> helper root `/usr/local/sbin/frpc-eds-ports`, instalado por
+> `scripts/setup-caddy-ports.sh` y autorizado en `/etc/sudoers.d/frpc-eds-ports`.
+> Ese helper solo acepta puertos 1024-65535 y rechaza los de infraestructura
+> (22, 80, 443, 2019, 7000, 7800, 8080, 8443), así que no concede root general.
+> Si usas *Cloud Firewalls* de DigitalOcean, ahí sí tendrás que abrir el puerto
+> a mano: el panel solo gestiona UFW del propio droplet.
+
 ## 4. Preparar el servidor
 
 ```bash
@@ -168,6 +177,32 @@ Copia `deploy/Caddyfile` a `/etc/caddy/Caddyfile` y elige una opción:
 
 ```bash
 sudo systemctl reload caddy
+```
+
+### Puertos públicos adicionales (cualquier puerto)
+
+El panel no tiene una lista fija de puertos: en el túnel escribes, por ejemplo,
+`4174, 5173` y se publican como `https://sub.dominio:4174` y
+`https://sub.dominio:5173`. Cada puerto `N` se reenvía al puerto `N` del mismo
+host local del túnel. Para que esto funcione, una sola vez en el servidor:
+
+```bash
+sudo bash /opt/frpc-eds/scripts/setup-caddy-ports.sh
+```
+
+El script:
+
+1. crea `/etc/caddy/frpc-eds.d/` escribible por el usuario del panel,
+2. añade `import /etc/caddy/frpc-eds.d/ports.caddy` al Caddyfile (con copia de
+   seguridad y `caddy validate` antes de recargar),
+3. instala el helper de firewall y la regla de sudoers,
+4. recarga Caddy.
+
+Requisito: `panel.service` **no** puede tener `NoNewPrivileges=true` (bloquea
+sudo). Está comentado en `deploy/panel.service`; si lo tenías activo:
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart panel
 ```
 
 ## 8. Configurar el panel

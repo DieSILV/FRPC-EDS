@@ -10,6 +10,7 @@ import { buildFrpcToml, buildFrpsToml } from "./toml.js";
 import { handlePluginRequest } from "./frpauth.js";
 import { RUNTIME_DIR, DATA_DIR } from "./config.js";
 import { writeFrpsConfig, writeAllNodeConfigs, writeNodeConfig } from "./runtime.js";
+import { syncCaddyPorts } from "./caddy.js";
 import {
   buildPs1Installer,
   compileWinInstaller,
@@ -185,6 +186,24 @@ async function afterTunnelChange(nodeId) {
   const local = store.localNode();
   if (local && local.id === nodeId && agent.running) {
     await agent.applyConfig();
+  }
+  return syncPublicPorts();
+}
+
+/**
+ * Publica en Caddy y abre en el firewall los puertos adicionales que pidan los
+ * túneles. Devuelve un aviso (o "") en vez de lanzar: el túnel ya está
+ * guardado y no queremos perder ese cambio por un fallo de infraestructura.
+ */
+async function syncPublicPorts() {
+  try {
+    const result = await syncCaddyPorts();
+    if (result?.firewall?.error) {
+      return `Los puertos se guardaron, pero el firewall no se actualizó: ${result.firewall.error}`;
+    }
+    return "";
+  } catch (err) {
+    return err?.message || "No se pudieron publicar los puertos adicionales";
   }
 }
 
@@ -580,8 +599,8 @@ export function buildApiRouter() {
     }
     delete body.newServerName;
     const tunnel = store.createTunnel(body);
-    await afterTunnelChange(tunnel.nodeId);
-    return send(ctx, 201, { tunnel });
+    const warning = await afterTunnelChange(tunnel.nodeId);
+    return send(ctx, 201, { tunnel, warning: warning || undefined });
   });
 
   r.put("/api/tunnels/:id", async (ctx) => {
@@ -594,17 +613,18 @@ export function buildApiRouter() {
     }
     delete body.newServerName;
     const tunnel = store.updateTunnel(ctx.params.id, body);
+    let warning = "";
     if (previous && previous.nodeId !== tunnel.nodeId) {
-      await afterTunnelChange(previous.nodeId);
+      warning = await afterTunnelChange(previous.nodeId);
     }
-    await afterTunnelChange(tunnel.nodeId);
-    return send(ctx, 200, { tunnel });
+    warning = (await afterTunnelChange(tunnel.nodeId)) || warning;
+    return send(ctx, 200, { tunnel, warning: warning || undefined });
   });
 
   r.delete("/api/tunnels/:id", async (ctx) => {
     const tunnel = store.deleteTunnel(ctx.params.id);
-    await afterTunnelChange(tunnel.nodeId);
-    return send(ctx, 200, { ok: true, tunnel });
+    const warning = await afterTunnelChange(tunnel.nodeId);
+    return send(ctx, 200, { ok: true, tunnel, warning: warning || undefined });
   });
 
   /* --- Configuración del servidor --------------------------------- */
@@ -616,7 +636,8 @@ export function buildApiRouter() {
     writeFrpsConfig();
     writeAllNodeConfigs();
     if (agent.running) await agent.applyConfig().catch(() => undefined);
-    return send(ctx, 200, { settings: store.getSettings() });
+    const warning = await syncPublicPorts();
+    return send(ctx, 200, { settings: store.getSettings(), warning: warning || undefined });
   });
 
   r.post("/api/settings/test-frps", async (ctx) => {

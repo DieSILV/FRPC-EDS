@@ -124,8 +124,9 @@ function renderView(tab) {
   if (tab === "server") renderServer();
 }
 
-async function afterMutation(message, { toastOk = true } = {}) {
+async function afterMutation(message, { toastOk = true, warning = "" } = {}) {
   if (toastOk && message) toast(message);
+  if (warning) toast(warning, "bad");
   await refresh(false);
   renderView(state.tab);
 }
@@ -697,8 +698,8 @@ function openTunnelModal(tunnel) {
 
       <div class="field" data-when="http">
         <label>Puertos públicos adicionales (opcional)</label>
-        <input type="text" name="publicPorts" class="mono" value="${esc((current.publicPorts || []).join(", "))}" placeholder="3001, 4173" />
-        <span class="hint">Se publican como https://sub.dominio:PUERTO con TLS. Habilitados: 3000, 3001, 4173, 5173, 9000.</span>
+        <input type="text" name="publicPorts" class="mono" value="${esc((current.publicPorts || []).join(", "))}" placeholder="4174, 5173" />
+        <span class="hint">Cualquier puerto libre (1024-65535). Cada puerto N se publica como https://sub.dominio:N con TLS y se reenvía al puerto N del mismo host local. El panel abre el puerto en el firewall automáticamente.</span>
       </div>
 
       <div class="grid-2">
@@ -758,16 +759,15 @@ function openTunnelModal(tunnel) {
         payload.nodeId = nodeId;
       }
       if (tunnel) {
-        await api(`/api/tunnels/${tunnel.id}`, { method: "PUT", body: payload });
-      } else {
-        await api("/api/tunnels", { method: "POST", body: payload });
+        const res = await api(`/api/tunnels/${tunnel.id}`, { method: "PUT", body: payload });
+        return afterMutation("Túnel actualizado", { warning: res?.warning });
       }
-      await afterMutation(
-        tunnel
-          ? "Túnel actualizado"
-          : payload.newServerName
-            ? "Túnel creado · servidor nuevo dado de alta"
-            : "Túnel creado",
+      const res = await api("/api/tunnels", { method: "POST", body: payload });
+      return afterMutation(
+        payload.newServerName
+          ? "Túnel creado · servidor nuevo dado de alta"
+          : "Túnel creado",
+        { warning: res?.warning },
       );
     },
   });
@@ -1078,16 +1078,21 @@ async function handleAction(act, el) {
     case "toggle-tunnel": {
       const tunnel = state.data.tunnels.find((t) => t.id === id);
       if (!tunnel) return;
-      await api(`/api/tunnels/${id}`, { method: "PUT", body: { enabled: !tunnel.enabled } });
-      return afterMutation(tunnel.enabled ? "Túnel pausado" : "Túnel activado");
+      const res = await api(`/api/tunnels/${id}`, {
+        method: "PUT",
+        body: { enabled: !tunnel.enabled },
+      });
+      return afterMutation(tunnel.enabled ? "Túnel pausado" : "Túnel activado", {
+        warning: res?.warning,
+      });
     }
 
     case "delete-tunnel": {
       const tunnel = state.data.tunnels.find((t) => t.id === id);
       if (!tunnel) return;
       if (!confirm(`¿Eliminar el túnel "${tunnel.name}"?`)) return;
-      await api(`/api/tunnels/${id}`, { method: "DELETE" });
-      return afterMutation("Túnel eliminado");
+      const res = await api(`/api/tunnels/${id}`, { method: "DELETE" });
+      return afterMutation("Túnel eliminado", { warning: res?.warning });
     }
 
     case "copy-url": {
@@ -1179,7 +1184,7 @@ async function handleAction(act, el) {
     case "save-settings": {
       const form = $("#settings-form");
       const fd = new FormData(form);
-      await api("/api/settings", {
+      const res = await api("/api/settings", {
         method: "PUT",
         body: {
           serverAddr: fd.get("serverAddr"),
@@ -1198,7 +1203,7 @@ async function handleAction(act, el) {
         },
       });
       state.frpsConfig = null;
-      return afterMutation("Configuración guardada");
+      return afterMutation("Configuración guardada", { warning: res?.warning });
     }
 
     case "test-frps": {
